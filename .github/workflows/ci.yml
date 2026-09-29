@@ -80,12 +80,18 @@ jobs:
         run: |
           dotnet tool install --global wix --version 5.0.2
           wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
+      # Two versions of the same build, to test upgrading from one to the other.
       - name: Build the installer
-        run: >
-          wix build installer/windows/Couchlink.wxs -arch x64
-          -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext
-          -d Version=0.0.${{ github.run_number }} -d BinDir=build/host/Release -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}"
-          -o Couchlink-Setup.msi
+        run: |
+          foreach ($build in @(@{ Version = "0.0.${{ github.run_number }}"; Out = 'Couchlink-Setup-old.msi' },
+                               @{ Version = "0.1.${{ github.run_number }}"; Out = 'Couchlink-Setup.msi' })) {
+            wix build installer/windows/Couchlink.wxs -arch x64 `
+              -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
+              -d "Version=$($build.Version)" -d BinDir=build/host/Release `
+              -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}" `
+              -o $build.Out
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       # Install, check, upgrade over the top, uninstall: on a real Windows.
       - name: Test the installer
         shell: pwsh
@@ -109,7 +115,7 @@ jobs:
           $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-nousbip.log')
           Check ($code -eq 1603) "refuses to install without usbip-win2 (exit $code)"
 
-          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-install.log', 'SKIPUSBIPCHECK=1')
+          $code = Invoke-Msi @('/i', 'Couchlink-Setup-old.msi', '/qn', '/l*v', 'msi-install.log', 'SKIPUSBIPCHECK=1')
           if ($code -ne 0) { Get-Content msi-install.log -Tail 80 }
           Check ($code -eq 0) "installs (exit $code)"
           Start-Sleep -Seconds 6
@@ -128,10 +134,18 @@ jobs:
           Check ($failure -match 'RESTART') 'the service restarts after a failure'
           Check (Test-Path "$env:ProgramFiles\Couchlink\couchlink-host.exe") 'couchlink-host.exe is in Program Files'
 
-          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-reinstall.log', 'SKIPUSBIPCHECK=1')
-          Check ($code -eq 0) "installs again over itself (exit $code)"
+          $code = Invoke-Msi @('/fa', 'Couchlink-Setup-old.msi', '/qn', '/l*v', 'msi-repair.log')
+          Check ($code -eq 0) "repairs (exit $code)"
           Start-Sleep -Seconds 3
-          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after reinstalling'
+          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after a repair'
+
+          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-upgrade.log', 'SKIPUSBIPCHECK=1')
+          Check ($code -eq 0) "upgrades to the newer version (exit $code)"
+          Start-Sleep -Seconds 4
+          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after upgrading'
+          $installed = @(Get-CimInstance Win32_Product -Filter "Name = 'Couchlink'")
+          Check ($installed.Count -eq 1 -and $installed[0].Version -like '0.1.*') "exactly one Couchlink is installed, the newer one ($($installed.Version -join ', '))"
+          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'pairings survive the upgrade'
 
           $code = Invoke-Msi @('/x', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-uninstall.log')
           Check ($code -eq 0) "uninstalls (exit $code)"

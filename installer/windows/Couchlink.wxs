@@ -90,10 +90,11 @@
     </Feature>
 
     <!--
-      Before the files go in: stop a copy set up with 'couchlink-host install'
-      (logon task, firewall rule, running process), and bring its pairings
-      along from the installing user's profile. Errors are ignored: on a fresh
-      PC there is nothing to clean up.
+      On a first install or an upgrade (not a repair, which would stop the
+      running service), before the files go in: stop a copy set up with
+      'couchlink-host install' (logon task, firewall rule, running process),
+      and bring its pairings along from the installing user's profile. Errors
+      are ignored: on a fresh PC there is nothing to clean up.
     -->
     <SetProperty Id="RemoveLegacyInstall"
                  Sequence="execute"
@@ -106,7 +107,7 @@
                   Impersonate="no"
                   Return="ignore" />
     <InstallExecuteSequence>
-      <Custom Action="RemoveLegacyInstall" After="StopServices" Condition="NOT (REMOVE=&quot;ALL&quot;)" />
+      <Custom Action="RemoveLegacyInstall" After="StopServices" Condition="NOT Installed" />
     </InstallExecuteSequence>
 
     <ui:WixUI Id="WixUI_Minimal" />
