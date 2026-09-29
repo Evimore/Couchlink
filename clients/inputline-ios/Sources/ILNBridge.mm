@@ -171,6 +171,10 @@ namespace {
 @property (nonatomic, assign) CFAbsoluteTime lastAttachSent;
 @property (nonatomic, assign) CFAbsoluteTime lastLizardSent;
 @property (nonatomic, assign) BOOL mouseModeOn;  // handed back to this device
+// Still set up the way Steam left it: attached, and neither disconnected nor
+// handed back to this device since. After a network drop the PC then keeps
+// its virtual controller instead of plugging in a new one.
+@property (nonatomic, assign) BOOL keptSettings;
 // Each input datagram also carries the previous report, so the PC can make
 // up for a lost datagram.
 @property (nonatomic, assign) std::uint32_t sequence;
@@ -913,6 +917,7 @@ namespace {
             }
         } else if (!controller.mouseModeOn) {
             controller.mouseModeOn = YES;
+            controller.keptSettings = NO;
             [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 1)];
             [self logEvent:[NSString stringWithFormat:@"%@ works as this device's mouse again", controller.device.name]];
         }
@@ -1076,6 +1081,9 @@ namespace {
                 }
                 const BOOL wasAttached = controller.attached;
                 controller.attached = event.attach_ack.status == link::AttachStatus::kOk;
+                if (controller.attached) {
+                    controller.keptSettings = YES;
+                }
                 if (!controller.attached && event.attach_ack.status == link::AttachStatus::kBackendUnavailable && !wasAttached) {
                     [self tellUser:@"The PC could not create the virtual controller. Is usbip-win2 installed?"];
                 }
@@ -1142,6 +1150,7 @@ namespace {
     link::Attach attach;
     attach.controller = controller.linkIndex;
     attach.transport = link::Transport::kBluetoothLe;
+    attach.flags = controller.keptSettings ? link::kAttachKeptSettings : 0;
     const char *serial = controller.serial.UTF8String;
     if (serial != NULL) {
         strncpy(attach.unit_serial.data(), serial, attach.unit_serial.size() - 1);
@@ -1166,6 +1175,7 @@ namespace {
             }
             for (ILNController *controller in self->_controllers.allValues) {
                 controller.attached = NO;
+                controller.keptSettings = NO;
             }
             [self logEvent:@"Disconnected: the controller works with this device until you tap Connect to PC or switch it off and on"];
         } else {
@@ -1380,8 +1390,7 @@ namespace {
                             ? [NSString stringWithFormat:@"%@ (CoreBluetooth error %ld)", error.localizedDescription, (long)error.code]
                             : @"no reason given"]];
         if (self->_state == ILNLinkStateConnected && self->_session) {
-            // The PC keeps the virtual controller plugged in for a while, in
-            // case this was a Bluetooth hiccup.
+            // The PC unplugs its virtual controller, as for a real one.
             [self sendDatagram:self->_session->make_detach(controller.linkIndex)];
         }
         [self->_controllers removeObjectForKey:device.identifier];

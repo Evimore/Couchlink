@@ -56,7 +56,7 @@ A datagram whose length does not match its header is dropped.
 | Hello | 0x10 | C→H | client nonce u64, client name, software version |
 | HelloAck | 0x11 | H→C | client nonce u64, host nonce u64, capabilities u32 (bit 0: Steam Controller 2026) |
 | PairResult | 0x12 | H→C | accepted u8 |
-| Attach | 0x20 | C→H | controller u8, kind u8 (1 = 2026 Steam Controller), transport u8 (1 BLE, 2 USB), reserved u8, VID u16, PID u16, attributes reply [64] (zero = host default), unit serial [20] |
+| Attach | 0x20 | C→H | controller u8, kind u8 (1 = 2026 Steam Controller), transport u8 (1 BLE, 2 USB), flags u8 (see below), VID u16, PID u16, attributes reply [64] (zero = host default), unit serial [20] |
 | AttachAck | 0x21 | H→C | controller u8, status u8 (0 ok, 1 unsupported, 2 backend unavailable, 3 failed) |
 | Input | 0x22 | C→H | controller u8, length u8, raw HID input report (report ID first, 1–64 bytes) |
 | Detach | 0x23 | C→H | controller u8 |
@@ -88,10 +88,11 @@ While pairing is closed the host does not answer `PairRequest` at all. Someone w
 
 - **Connect:** the client sends `Hello` until it gets a `HelloAck` carrying its nonce. The session key is then derived.
 - **Attach:** the client sends `Attach` per controller until it gets an `AttachAck`, then streams `Input` for every Bluetooth notification (unreliable, no batching).
-- **Keepalive:** the client sends `Ping` every second. The host drops a session after 3 s of silence, releasing every button before unplugging its controllers. The client re-hellos after 4 s without a `Pong`.
+- **Keepalive:** the client sends `Ping` every second. The host drops a session after 3 s of silence and releases every button. The client re-hellos after 4 s without a `Pong`.
 - **Roaming:** the host follows the client's source address.
-- **Reconnect:** a new `Hello` replaces the session and its controllers.
-- **End:** `Detach` and `Bye` end things cleanly.
+- **Controller lost:** when a controller drops off Bluetooth (switched off, out of range), the client sends `Detach` and the host unplugs its virtual controller at once, like a real one. When it comes back it is plugged in afresh and Steam sets it up.
+- **Network lost:** when a session ends without `Detach` (silence, or a new `Hello` from the same client), its virtual controllers stay plugged in for 10 s. An `Attach` with flag `0x01` (the controller stayed connected to the client, so it kept Steam's settings) takes over the same virtual controller; without it, the old one is unplugged and a fresh one plugged in.
+- **End:** `Bye` unplugs everything at once.
 
 ## Limits
 

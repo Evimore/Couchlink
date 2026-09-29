@@ -495,7 +495,7 @@ namespace {
       const auto second = client.expect(session, link::ClientSession::EventType::kHidOutput);
       CHECK(first && second && first->output.kind == link::OutputKind::kSetFeature && second->output.report == first->output.report);
 
-      // Turning the controller off reaches it, but is not a setting to replay.
+      // Turning the controller off reaches it too.
       sink(link::OutputKind::kSetFeature, {1, kCmdTurnOffController});
       for (int copy = 0; copy < 2; ++copy) {
         const auto off = client.expect(session, link::ClientSession::EventType::kHidOutput);
@@ -507,31 +507,22 @@ namespace {
     const auto pong = client.expect(session, link::ClientSession::EventType::kPong);
     CHECK(pong && pong->pong.client_time_us == 12345);
 
-    // A lost controller stays plugged in; when it comes back it takes over
-    // the same device and gets Steam's settings again.
-    const int releases_before = [&] {
-      std::lock_guard lock(f.backend.mutex);
-      return f.backend.releases;
-    }();
+    // A controller the app lost is unplugged at once, like a real one; when
+    // it comes back it is a new controller, which Steam sets up itself.
+    // Nothing of Steam's is sent to it again.
     client.send(session.make_detach(0));
     CHECK(eventually([&] {
-      return f.server.status().controllers == 0;
-    }));
-    {
       std::lock_guard lock(f.backend.mutex);
-      CHECK(f.backend.destroyed == 0 && f.backend.releases > releases_before);
-    }
+      return f.backend.destroyed == 1;
+    }));
+    CHECK(f.server.status().controllers == 0);
+    attach.flags = link::kAttachKeptSettings;  // no effect: nothing is waiting
     client.send(session.make_attach(attach));
     CHECK(client.expect(session, link::ClientSession::EventType::kAttachAck).has_value());
-    int settings_replayed = 0;
-    while (const auto replayed = client.expect(session, link::ClientSession::EventType::kHidOutput, 300)) {
-      CHECK(replayed->output.kind == link::OutputKind::kSetFeature && replayed->output.report[1] == 0x87);
-      ++settings_replayed;
-    }
-    CHECK(settings_replayed == 2);  // sent twice, like every setting
+    CHECK(!client.expect(session, link::ClientSession::EventType::kHidOutput, 300).has_value());
     {
       std::lock_guard lock(f.backend.mutex);
-      CHECK(f.backend.created == 1 && f.backend.destroyed == 0);
+      CHECK(f.backend.created == 2 && f.backend.destroyed == 1);
     }
 
     // Bye (the stream ended) unplugs right away.
@@ -541,7 +532,7 @@ namespace {
     }));
     CHECK(eventually([&] {
       std::lock_guard lock(f.backend.mutex);
-      return f.backend.destroyed == 1;
+      return f.backend.destroyed == 2;
     }));
   }
 
@@ -590,7 +581,7 @@ namespace {
     CHECK(f.backend.count_reports() == 5);
   }
 
-  void test_reconnect_replay_and_timeout() {
+  void test_network_drop_and_timeout() {
     Fixture f(300ms, true, 600ms);
     TestClient client(f.server.port());
     const auto pairing = f.pair(client);
@@ -611,8 +602,8 @@ namespace {
     std::this_thread::sleep_for(100ms);
     CHECK(f.server.status().controllers == 1);
 
-    // A fresh hello (app relaunch) replaces the session; its controller
-    // stays plugged in, waiting to be claimed again.
+    // A fresh hello (the network came back, or the app restarted) replaces
+    // the session; its controller stays plugged in for a while.
     link::ClientSession relaunched(pairing, "Test iPad", random_fill);
     CHECK(f.connect(client, relaunched));
     CHECK(f.server.status().controllers == 0);
@@ -629,14 +620,28 @@ namespace {
     std::this_thread::sleep_for(50ms);
     CHECK(f.backend.count_reports() == before);
 
-    // The relaunched app claims the same device, even when it could not
-    // read the controller's serial number this time.
+    // A controller that stayed connected to the app (so it kept Steam's
+    // settings) takes over the same device, even when the app could not read
+    // its serial number this time.
     attach.unit_serial.fill('\0');
+    attach.flags = link::kAttachKeptSettings;
     client.send(relaunched.make_attach(attach));
     CHECK(client.expect(relaunched, link::ClientSession::EventType::kAttachAck).has_value());
     {
       std::lock_guard lock(f.backend.mutex);
       CHECK(f.backend.created == 1 && f.backend.destroyed == 0);
+    }
+
+    // One that reconnected to the app in the meantime lost Steam's settings:
+    // the waiting device is unplugged and a fresh one plugged in.
+    link::ClientSession again(pairing, "Test iPad", random_fill);
+    CHECK(f.connect(client, again));
+    attach.flags = 0;
+    client.send(again.make_attach(attach));
+    CHECK(client.expect(again, link::ClientSession::EventType::kAttachAck).has_value());
+    {
+      std::lock_guard lock(f.backend.mutex);
+      CHECK(f.backend.created == 2 && f.backend.destroyed == 1);
     }
 
     // Silence drops the session; its controller is unplugged once the grace period ends.
@@ -645,7 +650,7 @@ namespace {
     }));
     CHECK(eventually([&] {
       std::lock_guard lock(f.backend.mutex);
-      return f.backend.destroyed == 1 && f.backend.releases >= 1;
+      return f.backend.destroyed == 2 && f.backend.releases >= 1;
     }));
   }
 
@@ -724,7 +729,7 @@ int main() {
   test_remote_pairing_disabled();
   test_session_flow();
   test_input_bundle_recovers_lost_reports();
-  test_reconnect_replay_and_timeout();
+  test_network_drop_and_timeout();
   test_backend_failure_and_instances();
   test_discovery_label();
   test_other_versions();

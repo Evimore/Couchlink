@@ -9,7 +9,7 @@
 - [x] Pairing from the couch: the PC shows the code on its screen, the device asks for it
 - [x] `inputline-host install`: background start at logon and firewall setup in one command
 - [x] Report the physical controller's firmware version, so Steam doesn't offer an update the virtual controller can't take
-- [x] Keep the virtual controller plugged in through Bluetooth or Wi-Fi drops of up to 2 minutes, and replay Steam's settings when the controller returns
+- [x] Reconnects the way Steam expects: a controller that drops off Bluetooth is unplugged like a real one and set up by Steam again when it returns; through a Wi-Fi drop of up to 10 s it stays plugged in
 - [x] Windows + usbip-win2 + iPad with a real 2026 Steam Controller: Steam shows full Steam Input, all inputs work
 - [x] InputLine app for iPad and iPhone: background Bluetooth with state restoration, Keychain pairing, haptics, timing statistics, event log and shareable report
 - [x] Background delivery measured: as smooth as foreground ([Checking smoothness](timing.md))

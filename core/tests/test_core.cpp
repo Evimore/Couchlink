@@ -197,15 +197,6 @@ namespace {
     CHECK(!adopt_firmware_attributes(identity, {}));
   }
 
-  void test_lasting_settings() {
-    CHECK(is_lasting_setting({1, kCmdSetSettingsValues, 3, 9, 0, 0}));
-    CHECK(is_lasting_setting({1, kCmdClearDigitalMappings}));
-    CHECK(!is_lasting_setting({1, kCmdTurnOffController}));
-    CHECK(!is_lasting_setting({1, kCmdTriggerHapticPulse, 0}));
-    CHECK(!is_lasting_setting({1, kCmdCalibrateGyro}));
-    CHECK(!is_lasting_setting({1}));
-  }
-
   void test_without_settings() {
     // 0x87 with settings 48 (IMU) and 49 (wireless packet version).
     const std::vector<std::uint8_t> report {0x01, 0x87, 0x06, 48, 0x18, 0x00, 49, 0x02, 0x00};
@@ -493,7 +484,11 @@ namespace {
     std::memcpy(attach.unit_serial.data(), "FXA1", 4);
     const auto attach2 = decode_attach(encode(attach));
     CHECK(attach2 && attach2->controller == 3 && attach2->attributes_reply[1] == 0x83 &&
-          std::memcmp(attach2->unit_serial.data(), "FXA1", 4) == 0 && attach2->product_id == kTritonBleProductId);
+          std::memcmp(attach2->unit_serial.data(), "FXA1", 4) == 0 && attach2->product_id == kTritonBleProductId &&
+          attach2->flags == 0);
+    attach.flags = kAttachKeptSettings;
+    CHECK(encode(attach)[3] == kAttachKeptSettings);  // the byte older versions left zero
+    CHECK(decode_attach(encode(attach))->flags == kAttachKeptSettings);
     auto bad_attach = encode(attach);
     bad_attach[1] = 9;  // unknown device kind
     CHECK(!decode_attach(bad_attach).has_value());
@@ -603,7 +598,6 @@ int main() {
   test_feature_policy();
   test_adopt_firmware_attributes();
   test_timing_stats();
-  test_lasting_settings();
   test_without_settings();
   test_sha256_vectors();
   test_hmac_vectors();

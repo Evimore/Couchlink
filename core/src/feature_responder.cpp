@@ -92,21 +92,6 @@ namespace inputline {
     return copied;
   }
 
-  bool is_lasting_setting(const std::vector<std::uint8_t> &report) {
-    if (report.size() < 2) {
-      return false;
-    }
-    switch (report[1]) {
-      case kCmdClearDigitalMappings:
-      case kCmdSetSettingsValues:
-      case kCmdClearSettingsValues:
-      case kCmdLoadDefaultSettings:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   FeatureResponder::FeatureResponder(ControllerIdentity identity):
       identity_(std::move(identity)) {}
 

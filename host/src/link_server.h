@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <map>
 #include <memory>
@@ -41,12 +42,16 @@ namespace inputline {
       std::size_t max_controllers_per_session = 4;
 
       /**
-       * How long a virtual controller stays plugged in after its client lost
-       * it (Bluetooth hiccup, Wi-Fi drop, app restart). If the same controller
-       * comes back in time it takes over the same USB device, so Windows and
-       * Steam never see it leave.
+       * How long a virtual controller stays plugged in after its client went
+       * silent (Wi-Fi drop, app restart) while the physical controller may
+       * still be connected to it. If the client comes back in time with the
+       * controller still in the same state, it takes over the same USB
+       * device. A controller the client itself lost (Detach) is unplugged at
+       * once, like a real one, and Steam sets it up again when it returns.
+       * Matches the app, which hands the controller's mouse mode back after
+       * 10 s without the PC.
        */
-      std::chrono::milliseconds reconnect_grace {120000};
+      std::chrono::milliseconds reconnect_grace {10000};
 
       /** Log report timing per controller this often (0 = off). */
       std::chrono::seconds stats_interval {0};
@@ -116,8 +121,8 @@ namespace inputline {
     struct Route {
       std::uint32_t client_id = 0;
       std::uint8_t controller = 0;
-      /** Settings Steam wrote, replayed to the physical controller after a reconnect. */
-      std::vector<std::vector<std::uint8_t>> settings;
+      /** Steam's latest commands to the controller, to log when it drops. */
+      std::deque<std::pair<Clock::time_point, std::string>> recent_commands;
     };
 
     struct Plugged {
@@ -195,6 +200,7 @@ namespace inputline {
     void send_session(Session &session, link::Type type, const std::vector<std::uint8_t> &payload);
     void on_output(const std::shared_ptr<Route> &route, link::OutputKind kind, const std::vector<std::uint8_t> &report);
     std::uint8_t allocate_instance() const;
+    void log_recent_commands(const Route &route) const;
     void drop_session(std::map<std::uint32_t, Session>::iterator it, const char *reason, bool keep_plugged);
     void park(Plugged plugged, const std::string &client_name);
     /** The controller input is for, or nullptr (and a NeedAttach) if it is not attached. */

@@ -251,6 +251,14 @@ namespace inputline::link {
     kUsb = 2,
   };
 
+  /**
+   * Attach flag: the controller has stayed connected to the client, and to
+   * the PC's settings, since its last AttachAck. A virtual controller the
+   * host still has plugged in for it can carry on as it is. Without it, the
+   * controller starts afresh and Steam has to set it up again.
+   */
+  constexpr std::uint8_t kAttachKeptSettings = 0x01;
+
   struct Attach {
     std::uint8_t controller = 0;
     DeviceKind kind = DeviceKind::kSteamController2026;
@@ -260,6 +268,7 @@ namespace inputline::link {
     /** Real GET_ATTRIBUTES_VALUES reply read by the client, or all zero for host defaults. */
     std::array<std::uint8_t, kFeatureReportSize> attributes_reply {};
     std::array<char, kSerialBytes> unit_serial {};
+    std::uint8_t flags = 0;  ///< kAttach* bits
   };
 
   enum class AttachStatus : std::uint8_t {

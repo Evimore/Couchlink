@@ -18,7 +18,28 @@ namespace inputline {
   namespace {
     constexpr auto kTickInterval = std::chrono::milliseconds(100);
     constexpr auto kNeedAttachInterval = std::chrono::milliseconds(200);
-    constexpr std::size_t kMaxRememberedSettings = 32;
+    /** Steam's commands to a controller kept for the log when it drops. */
+    constexpr std::size_t kMaxRecentCommands = 12;
+    /** How far back the drop log looks. */
+    constexpr std::chrono::seconds kRecentCommandsWindow {5};
+
+    /** "settings 7=7, 8=7" or "command 0x9f", for the log. */
+    std::string describe_command(const std::vector<std::uint8_t> &report) {
+      if (report.size() < 2) {
+        return "an empty command";
+      }
+      char text[32];
+      if (report[1] != kCmdSetSettingsValues || report.size() < 3) {
+        std::snprintf(text, sizeof(text), "command 0x%02x", report[1]);
+        return text;
+      }
+      std::string settings;
+      for (std::size_t i = 3; i + 3 <= report.size() && i < 3u + report[2]; i += 3) {
+        std::snprintf(text, sizeof(text), "%s%u=%u", settings.empty() ? "" : ", ", report[i], report[i + 1] | (report[i + 2] << 8));
+        settings += text;
+      }
+      return "settings " + settings;
+    }
     constexpr auto kRecentPairingGrace = std::chrono::seconds(30);
 
     std::uint64_t random_u64() {
@@ -493,11 +514,10 @@ namespace inputline {
         const auto number = attach->controller;
         const auto serial_end = std::find(attach->unit_serial.begin(), attach->unit_serial.end(), '\0');
         const std::string serial(attach->unit_serial.begin(), serial_end);
-        std::vector<std::vector<std::uint8_t>> replay;
         if (session.controllers.count(number) == 0) {
           session.last_sequence.erase(number);  // a (re)attached controller numbers its reports afresh
-          // The same physical controller coming back takes over its old
-          // device, which never left Windows.
+          // After a network drop, the same physical controller takes over the
+          // device that never left Windows, if it kept Steam's settings.
           const auto mine = [&](const Parked &p) {
             return p.plugged.route->client_id == session.client.client_id;
           };
@@ -512,19 +532,26 @@ namespace inputline {
               parked = only;
             }
           }
-          if (parked != parked_.end()) {
+          bool taken_over = false;
+          if (parked != parked_.end() && (attach->flags & kAttachKeptSettings) != 0) {
             Plugged plugged = std::move(parked->plugged);
             parked_.erase(parked);
             plugged.route->controller = number;
             if (!serial.empty()) {
               plugged.serial = serial;
             }
-            replay = plugged.route->settings;
             session.controllers.emplace(number, std::move(plugged));
-            log::info("link: '", session.client.name, "' controller ", int(number), " is back; it stayed plugged in");
-          } else if (session.controllers.size() >= options_.max_controllers_per_session) {
+            taken_over = true;
+            log::info("link: '", session.client.name, "' controller ", int(number), " is back after the network drop; it stayed plugged in");
+          } else if (parked != parked_.end()) {
+            // It reconnected in the meantime and lost Steam's settings: a
+            // fresh controller, which Steam sets up like any other.
+            log::info("link: '", session.client.name, "' controller ", int(number), " reconnected while the network was down; plugging it in afresh");
+            parked_.erase(parked);
+          }
+          if (!taken_over && session.controllers.size() >= options_.max_controllers_per_session) {
             ack.status = AttachStatus::kAttachFailed;
-          } else {
+          } else if (!taken_over) {
             auto route = std::make_shared<Route>();
             route->client_id = session.client.client_id;
             route->controller = number;
@@ -541,11 +568,6 @@ namespace inputline {
           }
         }
         send_session(session, Type::kAttachAck, encode(ack));
-        // The physical controller may have forgotten Steam's settings (IMU
-        // mode...) while it was away; Steam will not send them again.
-        for (const auto &report : replay) {
-          send_output(session, number, OutputKind::kSetFeature, report);
-        }
         return;
       }
 
@@ -553,10 +575,13 @@ namespace inputline {
         const auto ref = decode_controller_ref(datagram->payload);
         const auto controller = ref ? session.controllers.find(ref->controller) : session.controllers.end();
         if (controller != session.controllers.end()) {
+          // The controller itself dropped off Bluetooth: unplug it now, as a
+          // real controller would be. Steam sets it up again when it's back.
           Plugged plugged = std::move(controller->second);
           session.controllers.erase(controller);
-          log::info("link: '", session.client.name, "' lost controller ", int(ref->controller));
-          park(std::move(plugged), session.client.name);
+          plugged.device->release_all();
+          log::info("link: '", session.client.name, "' lost controller ", int(ref->controller), " (switched off or lost Bluetooth); unplugged it");
+          log_recent_commands(*plugged.route);
         }
         return;
       }
@@ -654,8 +679,24 @@ namespace inputline {
     if (options_.reconnect_grace.count() <= 0) {
       return;  // unplugged when `plugged` goes out of scope
     }
-    log::info("link: keeping '", client_name, "' controller plugged in for ", options_.reconnect_grace.count() / 1000, " s in case it comes back");
+    log::info("link: keeping '", client_name, "' controller plugged in for ", options_.reconnect_grace.count() / 1000, " s in case the network comes back");
     parked_.push_back(Parked {std::move(plugged), Clock::now() + options_.reconnect_grace});
+  }
+
+  void LinkServer::log_recent_commands(const Route &route) const {
+    // To find what makes a controller drop right after Steam sets it up.
+    const auto now = Clock::now();
+    std::string recent;
+    for (const auto &[when, command] : route.recent_commands) {
+      if (now - when <= kRecentCommandsWindow) {
+        char ago[32];
+        std::snprintf(ago, sizeof(ago), "%.1f s before: ", std::chrono::duration<double>(now - when).count());
+        recent += std::string(recent.empty() ? "" : "; ") + ago + command;
+      }
+    }
+    if (!recent.empty()) {
+      log::info("link: Steam's last commands to it: ", recent);
+    }
   }
 
   std::uint8_t LinkServer::allocate_instance() const {
@@ -694,14 +735,11 @@ namespace inputline {
     if (report.empty() || report.size() > kMaxReportSize) {
       return;
     }
-    // Only settings are replayed after a reconnect: never "turn off", or the
-    // controller would switch itself off each time it comes back.
-    if (kind == OutputKind::kSetFeature && is_lasting_setting(report)) {
-      auto &settings = route->settings;
-      settings.erase(std::remove(settings.begin(), settings.end(), report), settings.end());
-      settings.push_back(report);
-      if (settings.size() > kMaxRememberedSettings) {
-        settings.erase(settings.begin());
+    if (kind == OutputKind::kSetFeature) {
+      auto &recent = route->recent_commands;
+      recent.emplace_back(Clock::now(), describe_command(report));
+      if (recent.size() > kMaxRecentCommands) {
+        recent.pop_front();
       }
     }
     const auto it = sessions_.find(route->client_id);
@@ -710,7 +748,7 @@ namespace inputline {
     }
     const auto controller = it->second.controllers.find(route->controller);
     if (controller == it->second.controllers.end() || controller->second.route != route) {
-      return;  // away (parked): replayed when it comes back
+      return;  // parked: the physical controller is out of reach
     }
     send_output(it->second, route->controller, kind, report);
   }

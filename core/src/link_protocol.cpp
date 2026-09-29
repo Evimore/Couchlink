@@ -530,7 +530,7 @@ namespace inputline::link {
     w.u8(message.controller);
     w.u8(static_cast<std::uint8_t>(message.kind));
     w.u8(static_cast<std::uint8_t>(message.transport));
-    w.u8(0);
+    w.u8(message.flags);
     w.u16(message.vendor_id);
     w.u16(message.product_id);
     w.bytes(message.attributes_reply.data(), message.attributes_reply.size());
@@ -666,8 +666,8 @@ namespace inputline::link {
   std::optional<Attach> decode_attach(const std::vector<std::uint8_t> &payload) {
     Reader r(payload.data(), payload.size());
     Attach m;
-    std::uint8_t kind = 0, transport = 0, reserved = 0;
-    if (!r.u8(m.controller) || !r.u8(kind) || !r.u8(transport) || !r.u8(reserved) || !r.u16(m.vendor_id) ||
+    std::uint8_t kind = 0, transport = 0;
+    if (!r.u8(m.controller) || !r.u8(kind) || !r.u8(transport) || !r.u8(m.flags) || !r.u16(m.vendor_id) ||
         !r.u16(m.product_id) || !r.bytes(m.attributes_reply.data(), m.attributes_reply.size()) ||
         !r.bytes(m.unit_serial.data(), m.unit_serial.size())) {
       return std::nullopt;
