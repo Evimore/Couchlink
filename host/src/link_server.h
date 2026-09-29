@@ -97,6 +97,12 @@ namespace inputline {
 
     Status status() const;
 
+    /**
+     * @brief Handle one datagram as if it had arrived from @p from, on the
+     *        calling thread. For tests and fuzzing.
+     */
+    void process_datagram(const std::uint8_t *data, std::size_t length, const net::Endpoint &from);
+
     static constexpr int kMaxPairingFailures = 5;
     /** After a remotely started pairing is locked out, ignore new requests this long. */
     static constexpr std::chrono::minutes kRemotePairingCooldown {5};

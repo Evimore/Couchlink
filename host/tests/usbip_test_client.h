@@ -100,7 +100,7 @@ namespace inputline::test {
 
     /** Send CMD_SUBMIT without waiting for the reply. */
     std::uint32_t submit(std::uint32_t direction, std::uint32_t endpoint, std::uint32_t buffer_length,
-                         const std::uint8_t setup[8] = nullptr, const std::vector<std::uint8_t> &out = {}) {
+                         const std::uint8_t setup[8] = nullptr, const std::vector<std::uint8_t> &out = {}, std::uint32_t packets = 0) {
       const auto seqnum = ++seqnum_;
       std::vector<std::uint8_t> cmd;
       put32(cmd, usbip::proto::kCmdSubmit);
@@ -111,7 +111,7 @@ namespace inputline::test {
       put32(cmd, 0);  // transfer_flags
       put32(cmd, buffer_length);
       put32(cmd, 0);  // start_frame
-      put32(cmd, 0);  // number_of_packets
+      put32(cmd, packets);  // number_of_packets
       put32(cmd, 1);  // interval
       for (int i = 0; i < 8; ++i) {
         cmd.push_back(setup ? setup[i] : 0);

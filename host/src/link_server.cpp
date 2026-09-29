@@ -147,6 +147,17 @@ namespace inputline {
     return status;
   }
 
+  void LinkServer::process_datagram(const std::uint8_t *data, std::size_t length, const net::Endpoint &from) {
+    Deferred deferred;
+    {
+      std::lock_guard lock(mutex_);
+      handle(data, length, from, deferred);
+    }
+    for (auto &callback : deferred) {
+      callback();
+    }
+  }
+
   void LinkServer::run(net::Socket socket) {
     std::uint8_t buffer[kMaxDatagram + 1];
     auto next_tick = Clock::now() + kTickInterval;

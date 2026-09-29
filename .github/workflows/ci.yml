@@ -49,6 +49,33 @@ jobs:
           TSAN_OPTIONS: halt_on_error=1
         run: ctest --test-dir build --output-on-failure
 
+  fuzz:
+    name: Fuzz (libFuzzer, 1 min per target)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the libFuzzer runtime
+        run: sudo apt-get install -y libclang-rt-18-dev
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DINPUTLINE_FUZZ=ON -DINPUTLINE_BUILD_TESTS=OFF
+          cmake --build build -j --target fuzz_link_protocol fuzz_link_server fuzz_usbip_server
+      - name: Fuzz
+        run: |
+          mkdir -p crashes
+          for target in fuzz_link_protocol fuzz_link_server fuzz_usbip_server; do
+            echo "::group::$target"
+            mkdir -p "corpus/$target"
+            build/fuzz/$target "corpus/$target" -max_total_time=60 -artifact_prefix=crashes/$target- -print_final_stats=1
+            echo "::endgroup::"
+          done
+      - name: Upload what crashed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: crashes/
+
   windows:
     name: Windows (MSVC)
     runs-on: windows-latest

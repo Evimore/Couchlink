@@ -95,6 +95,10 @@ namespace inputline::link {
     std::vector<std::uint8_t> make_detach(std::uint8_t controller);
     std::vector<std::uint8_t> make_ping(std::uint64_t client_time_us);
     std::vector<std::uint8_t> make_bye();
+    /** Any session message, sealed like the others. For tests and fuzzing. */
+    std::vector<std::uint8_t> make_raw(Type type, const std::vector<std::uint8_t> &payload) {
+      return seal_session(type, payload);
+    }
 
     enum class EventType {
       kHelloAck,

@@ -106,6 +106,11 @@ namespace inputline::usbip {
     /** Called when a device gets attached or detached by the OS. */
     void set_attach_callback(std::function<void(const std::string &busid, bool attached)> callback);
 
+    /** Serve one connected client on the calling thread until it disconnects. For tests and fuzzing. */
+    void serve_connection(net::Socket socket) {
+      handle_client(socket);
+    }
+
   private:
     struct Export {
       std::uint32_t devnum = 0;

@@ -22,6 +22,12 @@ ctest --test-dir build --output-on-failure
 - C++17, no third-party dependencies in `core/` or `host/`.
 - New behaviour comes with a test. `host/tests/` has an in-process USB/IP client and a UDP test client for end-to-end tests.
 - CI runs the tests under ASan/UBSan and TSan. Please keep both clean.
+- CI also fuzzes what the network and other programs can reach: the link protocol, the link server (including messages from a paired client) and the USB/IP server. To fuzz locally (clang with libFuzzer):
+  ```sh
+  cmake -S . -B build-fuzz -DCMAKE_CXX_COMPILER=clang++ -DINPUTLINE_FUZZ=ON -DINPUTLINE_BUILD_TESTS=OFF
+  cmake --build build-fuzz
+  build-fuzz/fuzz/fuzz_link_server -max_total_time=300
+  ```
 - The InputLine app builds with XcodeGen (`clients/inputline-ios/project.yml`); CI builds it on every push.
 
 ## Releasing

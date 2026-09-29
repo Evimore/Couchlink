@@ -132,6 +132,9 @@ namespace inputline::usbip {
 
   // ---- Connection -----------------------------------------------------------
 
+  /** Linux's limit for one URB (USBIP_MAX_ISO_PACKETS). */
+  constexpr std::int32_t kMaxIsoPackets = 1024;
+
   class Connection {
   public:
     Connection(net::Socket socket, std::shared_ptr<UsbDevice> device, std::string busid):
@@ -211,6 +214,9 @@ namespace inputline::usbip {
         if (!net::recv_all(socket_, out_data.data(), out_data.size(), &closing_)) {
           return false;
         }
+      }
+      if (packets > kMaxIsoPackets) {
+        return false;  // no real client sends that many; don't allocate for it
       }
       if (packets > 0) {
         // Isochronous transfers: this server exposes no isochronous endpoints.

@@ -288,6 +288,28 @@ namespace {
   }
 
   /**
+   * Found by fuzzing: a URB claiming ~2 billion isochronous packets made the
+   * server allocate 16 bytes for each. It must just drop that connection.
+   */
+  void test_absurd_packet_count() {
+    usbip::Server server;
+    CHECK(server.start("127.0.0.1", 0));
+    const auto busid = server.add_device(std::make_shared<SteamControllerDevice>());
+    {
+      test::UsbipTestClient client(server.port());
+      CHECK(client.import(busid));
+      client.submit(usbip::proto::kDirIn, 1, 64, nullptr, {}, 0x7FFFFFFF);
+      CHECK(!client.read_reply().has_value());  // connection dropped
+    }
+    CHECK(wait_for([&] {
+      return !server.is_attached(busid);
+    }));
+    test::UsbipTestClient again(server.port());
+    CHECK(again.import(busid));  // still serving
+    server.stop();
+  }
+
+  /**
    * A second server can't share a port that is listening: 'demo' next to
    * the service must move to another port rather than take connections
    * meant for the service (SO_REUSEADDR allows that on Windows).
@@ -324,6 +346,7 @@ int main() {
   test_interrupt_transfers();
   test_server_restart_and_multiple_devices();
   test_port_not_shared();
+  test_absurd_packet_count();
   test_run_process_captures_output();
   return test::report_and_exit_code();
 }
