@@ -7,9 +7,10 @@
  * streaming app's own stream. Keeping the controller on its own channel means the streaming host
  * (Vibepollo, Sunshine, Apollo...) needs no changes at all.
  *
- * Every datagram starts with a 20-byte header. Pairing is an X25519 key
- * exchange bound to the 6-digit code shown on the PC, so the pairing key never
- * crosses the network. Session datagrams are encrypted and authenticated with
+ * Every datagram starts with a 20-byte header. Pairing is CPace, a
+ * password-authenticated key exchange keyed by the 6-digit code shown on the
+ * PC: the pairing key never crosses the network, and even someone in the
+ * middle of the exchange gets only one guess at the code per attempt. Session datagrams are encrypted and authenticated with
  * ChaCha20-Poly1305 and carry a strictly increasing counter, so nobody on the
  * network can read, inject or replay controller input. See docs/protocol.md
  * and SECURITY.md.
@@ -37,9 +38,9 @@ namespace inputline::link {
   /** "CLK1" on the wire. Never changes: every version recognises every other by it. */
   constexpr std::uint32_t kMagic = 0x314B4C43;
   /** Protocol version this build speaks. */
-  constexpr std::uint8_t kVersion = 2;
+  constexpr std::uint8_t kVersion = 3;
   /** Oldest protocol version this build still accepts. */
-  constexpr std::uint8_t kMinVersion = 2;
+  constexpr std::uint8_t kMinVersion = 3;
   constexpr std::size_t kHeaderSize = 20;
   constexpr std::size_t kTagSize = 16;
   constexpr std::size_t kKeySize = 32;
@@ -129,26 +130,40 @@ namespace inputline::link {
   SessionKeys derive_session_keys(const Key &pairing_key, std::uint64_t client_nonce, std::uint64_t host_nonce);
 
   /**
-   * What both sides derive during pairing. The pairing key depends on the
-   * X25519 shared secret and the PIN, so someone who only listens learns
-   * neither. The result key authenticates the PairResult and does not depend
-   * on the PIN, so a wrong code can be reported.
+   * Pairing is CPace (draft-irtf-cfrg-cpace, CPACE-X25519-SHA512): the client
+   * is the initiator, the host the responder. Both derive a secret generator
+   * from the code, the client's ID and the attempt's nonce, and exchange
+   * public shares computed on it.
+   */
+  crypto::Key32 pairing_generator(const std::string &pin, std::uint32_t client_id, std::uint64_t nonce);
+
+  /**
+   * What both sides derive from a pairing exchange. The pairing key and both
+   * confirmations depend on the code; a side that used another code derives
+   * different ones.
    */
   struct PairingKeys {
     Key pairing_key {};
-    Key result_key {};
-    std::array<std::uint8_t, kTagSize> proof {};
+    Key result_key {};  ///< authenticates an accepting PairResult (the host's confirmation)
+    std::array<std::uint8_t, kTagSize> proof {};  ///< the client's confirmation, in the PairRequest
   };
 
   /**
-   * @param own_secret This side's temporary X25519 secret.
-   * @param peer_public The other side's temporary public key.
-   * @return nullopt if the peer's key is invalid (small-order point).
+   * @param own_scalar This side's secret for this attempt (32 random bytes, never reused).
+   * @param peer_share The other side's public share.
+   * @return nullopt if the peer's share is invalid (a low-order point): abort the attempt.
    */
   std::optional<PairingKeys> derive_pairing_keys(
-    const Key &own_secret, const Key &peer_public, std::uint32_t client_id, const Key &client_public,
-    const Key &host_public, std::uint64_t nonce, const std::string &pin
+    const Key &own_scalar, const Key &peer_share, std::uint32_t client_id, const Key &client_share,
+    const Key &host_share, std::uint64_t nonce, const std::string &client_name
   );
+
+  /**
+   * Authenticates a PairResult that says "wrong code". It is derived from
+   * public values only, because the two sides don't share a key then; it
+   * only tells the client which attempt the answer is for.
+   */
+  Key pairing_failure_key(std::uint32_t client_id, const Key &client_share, const Key &host_share, std::uint64_t nonce);
 
   /** Accepts only strictly increasing counters. */
   class ReplayGuard {
@@ -178,7 +193,7 @@ namespace inputline::link {
     std::uint8_t min_version = kMinVersion;
     std::uint8_t max_version = kVersion;
     std::string software_version;  ///< inputline-host's own version, for messages
-    Key pairing_public_key {};  ///< the host's temporary pairing key while pairing is open, else zero
+    Key pairing_public_key {};  ///< in answer to a PairStart while pairing is open: the host's CPace share for it; else zero
   };
 
   /** Whether this build and the host that sent @p reply can talk, and if not, which side to update. */
@@ -193,7 +208,9 @@ namespace inputline::link {
   /**
    * A client that is not paired asks the host to show a pairing code. The host
    * picks the code, shows it on the PC's screen (which the user sees through
-   * the stream), and answers with a ProbeReply saying whether pairing is open.
+   * the stream), and answers with a ProbeReply saying whether pairing is open,
+   * carrying its CPace share for this attempt (the header's client ID and the
+   * nonce identify the attempt).
    */
   struct PairStart {
     std::uint64_t nonce = 0;
@@ -201,7 +218,7 @@ namespace inputline::link {
   };
 
   struct PairRequest {
-    Key client_public_key {};  ///< the client's temporary X25519 key
+    Key client_public_key {};  ///< the client's CPace share
     std::uint64_t nonce = 0;
     std::string client_name;
     std::array<std::uint8_t, kTagSize> proof {};

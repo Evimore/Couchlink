@@ -29,6 +29,13 @@ namespace inputline::crypto {
    */
   bool x25519(const Key32 &secret, const Key32 &peer_public, Key32 &shared);
 
+  /**
+   * @brief The Elligator 2 map for Curve25519 (RFC 9380, map_to_curve_elligator2
+   *        with Z = 2): turns a field element (little endian, bit 255 ignored)
+   *        into the u coordinate of a curve point, in constant time. For CPace.
+   */
+  Key32 elligator2_curve25519(const Key32 &field_element);
+
   /** XOR `length` bytes with the ChaCha20 keystream starting at block `counter`. */
   void chacha20_xor(const Key32 &key, std::uint32_t counter, const Nonce12 &nonce, const std::uint8_t *in, std::uint8_t *out, std::size_t length);
 

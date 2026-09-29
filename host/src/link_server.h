@@ -106,6 +106,8 @@ namespace inputline {
     void process_datagram(const std::uint8_t *data, std::size_t length, const net::Endpoint &from);
 
     static constexpr int kMaxPairingFailures = 5;
+    /** Pairing attempts (PairStarts) remembered per window; the oldest go first. */
+    static constexpr std::size_t kMaxPairingAttempts = 16;
     /** After a remotely started pairing is locked out, ignore new requests this long. */
     static constexpr std::chrono::minutes kRemotePairingCooldown {5};
 
@@ -156,8 +158,14 @@ namespace inputline {
       int failures = 0;
       std::function<void(const PairingOutcome &)> on_done;
       bool remote = false;  ///< opened by a client's PairStart
-      link::Key secret {};  ///< temporary X25519 key for this window only
-      link::Key public_key {};
+      /** One CPace exchange per client attempt; its secret is used once. */
+      struct Attempt {
+        std::uint32_t client_id = 0;
+        std::uint64_t nonce = 0;
+        link::Key scalar {};
+        link::Key share {};
+      };
+      std::vector<Attempt> attempts;
     };
 
     struct RecentPairing {

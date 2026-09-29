@@ -22,6 +22,7 @@
 - [x] Disconnect / Connect in the app: hand the controller back to the iPad; it goes back to the PC when switched off and on
 - [x] App: while connected, the PC section shows "Connected to <PC>" and a Disconnect button
 - [x] Tray icon with status, the pairing code and update notices; the service checks GitHub for new versions; the app says which side runs an older version
+- [x] Protocol version 3: pairing with CPace, a password-authenticated key exchange (checked against the CFRG draft's test vectors)
 - [x] Fuzzing in CI: link protocol, link server and USB/IP server
 - [x] Windows installer (MSI): `inputline-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
@@ -46,6 +47,5 @@
 
 ## Later
 
-- [ ] Password-authenticated pairing (a PAKE such as CPace), so even an active attacker during pairing learns nothing
 - [ ] 2015 Steam Controller (BLE `0x1106`, wired `28DE:1102` persona)
 - [ ] Battery reports over Bluetooth

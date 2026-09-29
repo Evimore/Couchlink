@@ -210,7 +210,8 @@ namespace {
 
     std::unique_ptr<link::ClientSession> _session;
     link::ClientSession::PairingAttempt _pairingAttempt;
-    link::Key _hostPairingKey;  // the PC's temporary key, from its ProbeReply
+    link::Key _hostPairingKey;  // the PC's CPace share for this attempt, from its ProbeReply
+    NSString *_enteredCode;  // typed before the PC's share for a new attempt arrived
     BOOL _codeRequested;
     NSString *_versionProblem;  // set when the PC and this app can't talk: which one to update
     NSString *_updateNote;  // they can talk, but run different versions
@@ -953,6 +954,11 @@ namespace {
                 const auto reply = link::ClientSession::parse_probe_reply(data, length, _pairingAttempt.nonce);
                 if (reply && reply->pairing_open) {
                     _hostPairingKey = reply->pairing_public_key;
+                    if (_enteredCode != nil && _hostPairingKey != link::Key {}) {
+                        NSString *code = _enteredCode;
+                        _enteredCode = nil;
+                        [self useCode:code];
+                    }
                 }
                 if (reply && !_codeRequested) {
                     _codeRequested = YES;
@@ -973,7 +979,13 @@ namespace {
                 [self tellUser:[NSString stringWithFormat:@"Paired with %@.", _hostName]];
                 [self startSessionWithPairing:pairing];
             } else {
+                // The PC discards its side of an attempt after a wrong code:
+                // start a new one (a new PairStart) while the user types again.
+                [self logEvent:@"Pairing: the code did not match"];
+                _pairingAttempt = link::ClientSession::begin_pairing(SecureRandom);
+                _hostPairingKey = link::Key {};
                 _pendingPairRequest.clear();
+                _lastSend = 0;
                 [self askForCode:@"That code did not match. Enter the code shown on the PC's screen."];
             }
             return;
@@ -1165,6 +1177,7 @@ namespace {
 {
     _pairingAttempt = link::ClientSession::begin_pairing(SecureRandom);
     _hostPairingKey = link::Key {};
+    _enteredCode = nil;
     _pendingPairRequest.clear();
     _codeRequested = NO;
     _session.reset();
@@ -1195,13 +1208,23 @@ namespace {
             [self askForCode:[NSString stringWithFormat:@"The code has %d digits. Enter the code shown on the PC's screen.", (int)link::kPinDigits]];
             return;
         }
-        if (!link::ClientSession::enter_pin(self->_pairingAttempt, self->_hostPairingKey, ToStdString(digits))) {
-            [self askForCode:[NSString stringWithFormat:@"%@ isn't accepting new devices right now. Tap Connect to try again.", self->_hostName]];
+        if (self->_hostPairingKey == link::Key {}) {
+            self->_enteredCode = [digits copy];  // used as soon as the PC's share arrives
             return;
         }
-        self->_pendingPairRequest = link::ClientSession::make_pair_request(self->_pairingAttempt, ToStdString([self clientName]));
-        self->_lastSend = 0;
+        [self useCode:digits];
     });
+}
+
+/// Run the pairing exchange with the code the user typed. Link queue.
+- (void)useCode:(NSString *)digits
+{
+    if (!link::ClientSession::enter_pin(_pairingAttempt, _hostPairingKey, ToStdString(digits), ToStdString([self clientName]))) {
+        [self askForCode:[NSString stringWithFormat:@"%@ isn't accepting new devices right now. Tap Connect to try again.", _hostName]];
+        return;
+    }
+    _pendingPairRequest = link::ClientSession::make_pair_request(_pairingAttempt, ToStdString([self clientName]));
+    _lastSend = 0;
 }
 
 - (void)cancelPairing

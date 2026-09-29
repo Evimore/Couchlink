@@ -9,6 +9,7 @@
 // 2. Version negotiation: every combination of older/newer app and PC ends in
 //    "compatible" or a clear "update the PC" / "update the app".
 
+#include "inputline/cpace.h"
 #include "inputline/link_client.h"
 #include "inputline/link_protocol.h"
 
@@ -56,7 +57,7 @@ namespace {
   }
 
   void test_frozen_wire_format() {
-    CHECK(kVersion == 2);  // bumping it? update the fixtures below together
+    CHECK(kVersion == 3);  // bumping it? update the fixtures below together
     CHECK(frozen("probe", encode(Probe {0x0102030405060708}), "0807060504030201"));
 
     ProbeReply reply;
@@ -112,23 +113,28 @@ namespace {
     session.type = Type::kInputBundle;
     session.client_id = 0xCAFEBABE;
     session.counter = 42;
-    CHECK(frozen("sealed session datagram", seal(session, encode(bundle), &key), "434c4b3102250f00bebafeca2a000000000000003c190b18bd252488ff77d678c6b551eeb3c0a0cf1ab3894863cef6412ea04d"));
+    CHECK(frozen("sealed session datagram", seal(session, encode(bundle), &key), "434c4b3103250f00bebafeca2a000000000000003c190b18bd252488ff77d678c6b5516b577204b485e1dafc903529c4c4411d"));
     Header hello;
     hello.type = Type::kHello;
     hello.client_id = 0xCAFEBABE;
     hello.counter = 1000;
-    CHECK(frozen("sealed hello", seal(hello, encode(Hello {0x3132333435363738, "iPad", "0.2.0"}), &key), "434c4b3102101300bebafecae8030000000000003837363534333231046950616405302e322e30f71f918434857f65909f2e14b49dd178"));
+    CHECK(frozen("sealed hello", seal(hello, encode(Hello {0x3132333435363738, "iPad", "0.2.0"}), &key), "434c4b3103101300bebafecae8030000000000003837363534333231046950616405302e322e30149e274a6143ee1e08149c89a0549b56"));
 
     // Key derivations.
     CHECK(frozen("session key", bytes_of(derive_session_keys(key, 1, 2).client_to_host), "77dce3f81df8ce51c60ee8247080754969d32d3c8e0ebe2eae77e73e78e87e52"));
-    const auto client_public = inputline::crypto::x25519_public_key(pattern_key(0x20));
-    const auto host_public = inputline::crypto::x25519_public_key(pattern_key(0x30));
-    const auto keys = derive_pairing_keys(pattern_key(0x20), host_public, 7, client_public, host_public, 99, "123456");
+    // Pairing (CPace; its own test vectors are in test_crypto.cpp).
+    const auto generator = pairing_generator("123456", 7, 99);
+    CHECK(frozen("pairing generator", bytes_of(generator), "a9fc4318937652e56782cadbeb912fbecf7c393795c85d7d003857ae68d0284d"));
+    const auto client_share = inputline::cpace::public_share(pattern_key(0x20), generator);
+    const auto host_share = inputline::cpace::public_share(pattern_key(0x30), generator);
+    const auto keys = derive_pairing_keys(pattern_key(0x20), host_share, 7, client_share, host_share, 99, "iPad");
     CHECK(keys.has_value());
     if (keys) {
-      CHECK(frozen("pairing key", bytes_of(keys->pairing_key), "d0899173c074de0e7a80ee7d36432d0aa5db13297dec5a122ae5116e12700549"));
-      CHECK(frozen("pairing proof", std::vector<std::uint8_t>(keys->proof.begin(), keys->proof.end()), "8add066cf23ef6123e211974db4766cd"));
+      CHECK(frozen("pairing key", bytes_of(keys->pairing_key), "a376b640d4c89eb69969a2c1c7960b3806f0d7362d8da0b1e6e8137b16611901"));
+      CHECK(frozen("pairing proof", std::vector<std::uint8_t>(keys->proof.begin(), keys->proof.end()), "20b167b777f1448b6e6b2ed3a47021ee"));
+      CHECK(frozen("pairing result key", bytes_of(keys->result_key), "5db23d5f074dff5b80c4f33b07cbb050291aac81c4ddac7d9987e95bbf6e7602"));
     }
+    CHECK(frozen("pairing failure key", bytes_of(pairing_failure_key(7, client_share, host_share, 99)), "ae00ad6579e067c99010efadca6f6e08441891860b82d82da68c4ad00f479229"));
   }
 
   std::vector<std::uint8_t> probe_reply_datagram(std::uint8_t version, const std::vector<std::uint8_t> &payload) {
@@ -171,6 +177,22 @@ namespace {
     const auto from_v1 = ClientSession::parse_probe_reply(v1.data(), v1.size(), 0x0102030405060708);
     CHECK(from_v1 && from_v1->host_name == "Old" && from_v1->max_version == 1);
     CHECK(from_v1 && check_compatibility(*from_v1) == Compatibility::kUpdateHost);
+
+    // What a version 2 PC (InputLine 0.2 betas, before CPace pairing) sends:
+    // this app says to update the PC; an app of that version, reading this
+    // PC's reply, says to update the app.
+    ProbeReply v2;
+    v2.nonce = 6;
+    v2.host_name = "Beta";
+    v2.min_version = 2;
+    v2.max_version = 2;
+    v2.software_version = "0.2.0-beta.2";
+    const auto v2_datagram = probe_reply_datagram(2, encode(v2));
+    const auto from_v2 = ClientSession::parse_probe_reply(v2_datagram.data(), v2_datagram.size(), 6);
+    CHECK(from_v2 && from_v2->software_version == "0.2.0-beta.2");
+    CHECK(from_v2 && check_compatibility(*from_v2) == Compatibility::kUpdateHost);
+    ProbeReply this_pc;
+    CHECK(check_compatibility(this_pc, 2) == Compatibility::kUpdateClient);
 
     // A future PC that appends fields this build doesn't know yet.
     ProbeReply future;

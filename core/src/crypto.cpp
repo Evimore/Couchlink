@@ -113,6 +113,19 @@ namespace inputline::crypto {
       o = c;
     }
 
+    /** o = i^((p-1)/2): 1 for a nonzero square, p-1 for a non-square, 0 for 0. */
+    void legendre(Field &o, const Field &in) {
+      // (p-1)/2 = 2^254 - 10: every bit from 253 down is set except bits 3 and 0.
+      Field c = in;
+      for (int a = 252; a >= 0; --a) {
+        square(c, c);
+        if (a != 3 && a != 0) {
+          mul(c, c, in);
+        }
+      }
+      o = c;
+    }
+
     void scalar_mult(std::uint8_t *q, const std::uint8_t *n, const std::uint8_t *p) {
       std::uint8_t z[32];
       std::memcpy(z, n, 32);
@@ -403,6 +416,43 @@ namespace inputline::crypto {
     static const std::uint8_t kBasePoint[32] = {9};
     Key32 out {};
     scalar_mult(out.data(), secret.data(), kBasePoint);
+    return out;
+  }
+
+  Key32 elligator2_curve25519(const Key32 &field_element) {
+    // v = -A / (1 + Z r^2), with A = 486662 and Z = 2 (RFC 9380, draft-irtf-cfrg-cpace)
+    constexpr Field kA = {0x6D06, 0x7};        // 486662
+    constexpr Field kHalfA = {0xB683, 0x3};    // 243331 = A / 2
+    constexpr Field kOne = {1};
+    Field r {};
+    unpack(r, field_element.data());  // ignores bit 255
+    Field t {};
+    square(t, r);
+    add(t, t, t);
+    add(t, t, kOne);
+    invert(t, t);
+    Field v {};
+    mul(v, kA, t);
+    sub(v, Field {}, v);
+    // epsilon = (v^3 + A v^2 + v)^((p-1)/2)
+    Field g {};
+    square(g, v);
+    Field av {};
+    mul(av, kA, v);
+    add(g, g, av);
+    add(g, g, kOne);
+    mul(g, g, v);
+    Field epsilon {};
+    legendre(epsilon, g);
+    // x = epsilon v - (1 - epsilon) A / 2: v on the curve, else -v - A on it.
+    Field x {};
+    mul(x, epsilon, v);
+    Field rest {};
+    sub(rest, kOne, epsilon);
+    mul(rest, rest, kHalfA);
+    sub(x, x, rest);
+    Key32 out {};
+    pack(out.data(), x);
     return out;
   }
 

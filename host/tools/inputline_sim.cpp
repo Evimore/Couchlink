@@ -187,7 +187,7 @@ namespace {
       std::printf("'%s' runs an incompatible InputLine (%s): update one of them.\n", opened->host_name.c_str(), opened->software_version.c_str());
       return 1;
     }
-    if (!link::ClientSession::enter_pin(pairing, opened->pairing_public_key, pin)) {
+    if (!link::ClientSession::enter_pin(pairing, opened->pairing_public_key, pin, "inputline-sim")) {
       std::printf("'%s' sent an invalid pairing key.\n", opened->host_name.c_str());
       return 1;
     }

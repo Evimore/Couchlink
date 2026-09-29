@@ -1,10 +1,12 @@
 add_library(inputline_core STATIC
+  src/cpace.cpp
   src/crypto.cpp
   src/feature_responder.cpp
   src/link_client.cpp
   src/link_protocol.cpp
   src/report_converter.cpp
   src/sha256.cpp
+  src/sha512.cpp
   src/test_pattern.cpp
   src/timing_stats.cpp
   src/version.cpp

@@ -1,6 +1,7 @@
 #include "link_server.h"
 
 #include "log.h"
+#include "inputline/cpace.h"
 #include "inputline/link_client.h"
 #include "inputline/sha256.h"
 
@@ -93,8 +94,6 @@ namespace inputline {
     window.deadline = Clock::now() + length;
     window.on_done = std::move(on_done);
     window.remote = remote;
-    random_bytes(window.secret.data(), window.secret.size());
-    window.public_key = crypto::x25519_public_key(window.secret);
     return window;
   }
 
@@ -112,9 +111,6 @@ namespace inputline {
     reply.min_version = kMinVersion;
     reply.max_version = kVersion;
     reply.software_version = options_.software_version;
-    if (pairing_) {
-      reply.pairing_public_key = pairing_->public_key;
-    }
     return reply;
   }
 
@@ -253,9 +249,31 @@ namespace inputline {
       }
     }
 
+    auto reply = probe_reply(start->nonce);
+    const auto client_id = datagram.header.client_id;
+    if (pairing_ && now < pairing_->deadline && client_id != 0) {
+      // This attempt's CPace share; the client retransmits, so the same one each time.
+      auto &attempts = pairing_->attempts;
+      auto it = std::find_if(attempts.begin(), attempts.end(), [&](const PairingWindow::Attempt &a) {
+        return a.client_id == client_id && a.nonce == start->nonce;
+      });
+      if (it == attempts.end()) {
+        if (attempts.size() >= kMaxPairingAttempts) {
+          attempts.erase(attempts.begin());
+        }
+        PairingWindow::Attempt attempt;
+        attempt.client_id = client_id;
+        attempt.nonce = start->nonce;
+        random_bytes(attempt.scalar.data(), attempt.scalar.size());
+        attempt.share = cpace::public_share(attempt.scalar, pairing_generator(pairing_->pin, client_id, start->nonce));
+        attempts.push_back(attempt);
+        it = attempts.end() - 1;
+      }
+      reply.pairing_public_key = it->share;
+    }
     Header header;
     header.type = Type::kProbeReply;
-    send_raw(seal(header, encode(probe_reply(start->nonce)), nullptr), from);
+    send_raw(seal(header, encode(reply), nullptr), from);
   }
 
   void LinkServer::handle_pair_request(const Datagram &datagram, const net::Endpoint &from, Deferred &deferred) {
@@ -283,16 +301,26 @@ namespace inputline {
       return;  // not pairing: stay silent
     }
 
+    auto &attempts = pairing_->attempts;
+    const auto it = std::find_if(attempts.begin(), attempts.end(), [&](const PairingWindow::Attempt &a) {
+      return a.client_id == client_id && a.nonce == request->nonce;
+    });
+    if (it == attempts.end()) {
+      return;  // no PairStart for this, or already used: stay silent
+    }
+    // Each CPace secret is used for one exchange only.
+    const PairingWindow::Attempt attempt = *it;
+    attempts.erase(it);
     const auto keys = derive_pairing_keys(
-      pairing_->secret, request->client_public_key, client_id, request->client_public_key, pairing_->public_key, request->nonce, pairing_->pin
+      attempt.scalar, request->client_public_key, client_id, request->client_public_key, attempt.share, request->nonce, request->client_name
     );
     if (!keys) {
-      return;  // invalid key: not a real client
+      return;  // invalid share: not a real client
     }
     if (!constant_time_equal(keys->proof.data(), request->proof.data(), keys->proof.size())) {
       ++pairing_->failures;
       log::warn("link: pairing attempt from ", from.to_string(), " used the wrong code (", pairing_->failures, "/", kMaxPairingFailures, ")");
-      reply_with(false, keys->result_key);
+      reply_with(false, pairing_failure_key(client_id, request->client_public_key, attempt.share, request->nonce));
       if (pairing_->failures >= kMaxPairingFailures) {
         if (pairing_->remote) {
           remote_pairing_blocked_until_ = now + kRemotePairingCooldown;

@@ -223,14 +223,14 @@ namespace {
       return attempt.pairing();
     }
 
-    /** Get the host's temporary pairing key with a probe, then enter @p pin. */
-    link::ClientSession::PairingAttempt attempt_with_code(TestClient &client, const std::string &pin) {
+    /** Start an attempt (PairStart gets the host's CPace share for it), then enter @p pin. */
+    link::ClientSession::PairingAttempt attempt_with_code(TestClient &client, const std::string &pin, const std::string &name = "Test iPad") {
       auto attempt = link::ClientSession::begin_pairing(random_fill);
-      client.send(link::ClientSession::make_probe(attempt.nonce));
+      client.send(link::ClientSession::make_pair_start(attempt, name));
       const auto reply = client.receive();
       const auto probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), attempt.nonce);
-      CHECK(probe && probe->pairing_open);
-      CHECK(probe && link::ClientSession::enter_pin(attempt, probe->pairing_public_key, pin));
+      CHECK(probe && probe->pairing_open && probe->pairing_public_key != link::Key {});
+      CHECK(probe && link::ClientSession::enter_pin(attempt, probe->pairing_public_key, pin, name));
       return attempt;
     }
 
@@ -249,10 +249,10 @@ namespace {
     auto probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), 99);
     CHECK(probe && probe->host_name == "Test PC" && !probe->pairing_open);
 
-    // Not pairing: the reply carries no pairing key, and requests are ignored silently.
+    // Not pairing: the reply carries no share, and requests are ignored silently.
     CHECK(probe && probe->pairing_public_key == link::Key {});
     auto stranger = link::ClientSession::begin_pairing(random_fill);
-    CHECK(link::ClientSession::enter_pin(stranger, inputline::crypto::x25519_public_key(test_secret(1)), "111111"));
+    CHECK(link::ClientSession::enter_pin(stranger, inputline::crypto::x25519_public_key(test_secret(1)), "111111", "x"));
     client.send(link::ClientSession::make_pair_request(stranger, "x"));
     CHECK(client.receive(200).empty());
 
@@ -264,17 +264,14 @@ namespace {
       paired_name = result.client_name;
       outcome = result.success ? 1 : 0;
     });
+    // A plain probe learns that pairing is open, but gets no share: only a PairStart does.
     client.send(link::ClientSession::make_probe(5));
     reply = client.receive();
     probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), 5);
-    CHECK(probe && probe->pairing_open);
+    CHECK(probe && probe->pairing_open && probe->pairing_public_key == link::Key {});
 
-    CHECK(probe && probe->pairing_public_key != link::Key {});
-    const auto host_key = probe->pairing_public_key;
-
-    // Wrong code: authentic rejection, window stays open.
-    auto attempt = link::ClientSession::begin_pairing(random_fill);
-    CHECK(link::ClientSession::enter_pin(attempt, host_key, "654321"));
+    // Wrong code: a rejection the client can read, and the window stays open.
+    auto attempt = f.attempt_with_code(client, "654321", "Living room iPad");
     client.send(link::ClientSession::make_pair_request(attempt, "Living room iPad"));
     reply = client.receive();
     auto result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
@@ -285,8 +282,12 @@ namespace {
     const auto request = link::ClientSession::make_pair_request(attempt, "Living room iPad");
     CHECK(std::search(request.begin(), request.end(), attempt.keys.pairing_key.begin(), attempt.keys.pairing_key.end()) == request.end());
 
-    // Right code.
-    CHECK(link::ClientSession::enter_pin(attempt, host_key, "123456"));
+    // The host's secret for that attempt is gone: sending it again gets no answer.
+    client.send(request);
+    CHECK(client.receive(200).empty());
+
+    // Right code, in a new attempt.
+    attempt = f.attempt_with_code(client, "123456", "Living room iPad");
     client.send(link::ClientSession::make_pair_request(attempt, "Living room iPad"));
     reply = client.receive();
     result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
@@ -320,16 +321,21 @@ namespace {
     f.server.open_pairing("000000", 10s, [&](const LinkServer::PairingOutcome &result) {
       outcome = result.success ? 1 : 0;
     });
-    auto attempt = f.attempt_with_code(client, "999999");
+    // Each guess needs its own attempt.
+    std::vector<std::uint8_t> last_request;
     for (int i = 0; i < LinkServer::kMaxPairingFailures; ++i) {
-      client.send(link::ClientSession::make_pair_request(attempt, "guesser"));
-      client.receive();
+      auto attempt = f.attempt_with_code(client, "999999", "guesser");
+      last_request = link::ClientSession::make_pair_request(attempt, "guesser");
+      client.send(last_request);
+      const auto reply = client.receive();
+      const auto result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
+      CHECK(result.has_value() && !*result);
     }
     CHECK(eventually([&] {
       return outcome.load() == 0;
     }));
     CHECK(!f.server.pairing_open());
-    client.send(link::ClientSession::make_pair_request(attempt, "guesser"));
+    client.send(last_request);
     CHECK(client.receive(200).empty());
   }
 
@@ -347,6 +353,8 @@ namespace {
     auto attempt = link::ClientSession::begin_pairing(random_fill);
     auto reply = pair_start(client, attempt, "Couch iPad");
     CHECK(reply && reply->pairing_open && reply->host_name == "Test PC");
+    const auto host_share = reply ? reply->pairing_public_key : link::Key {};
+    CHECK(host_share != link::Key {});
     CHECK(eventually([&] {
       return f.shown() == 1;
     }));
@@ -358,16 +366,19 @@ namespace {
     }
     CHECK(code.size() == link::kPinDigits && code.find_first_not_of("0123456789") == std::string::npos);
 
-    // Asking again while the window is open shows nothing new.
+    // The client retransmits: the same attempt gets the same share.
+    reply = pair_start(client, attempt, "Couch iPad");
+    CHECK(reply && reply->pairing_public_key == host_share);
+
+    // Another attempt while the window is open shows nothing new, and gets its own share.
     auto again = link::ClientSession::begin_pairing(random_fill);
-    const auto host_key = reply ? reply->pairing_public_key : link::Key {};
     reply = pair_start(client, again, "Couch iPad");
-    CHECK(reply && reply->pairing_open && reply->pairing_public_key == host_key);
+    CHECK(reply && reply->pairing_open && reply->pairing_public_key != link::Key {} && reply->pairing_public_key != host_share);
     std::this_thread::sleep_for(50ms);
     CHECK(f.shown() == 1);
 
     // Typing the code on the client pairs it.
-    CHECK(link::ClientSession::enter_pin(attempt, host_key, code));
+    CHECK(link::ClientSession::enter_pin(attempt, host_share, code, "Couch iPad"));
     client.send(link::ClientSession::make_pair_request(attempt, "Couch iPad"));
     auto answer = client.receive();
     auto accepted = link::ClientSession::parse_pair_result(answer.data(), answer.size(), attempt);
@@ -377,11 +388,12 @@ namespace {
     }));
 
     // Too many wrong codes close the window and ignore requests for a while.
-    auto guesser = link::ClientSession::begin_pairing(random_fill);
-    reply = pair_start(client, guesser, "Stranger");
-    CHECK(reply && reply->pairing_open);
-    CHECK(reply && link::ClientSession::enter_pin(guesser, reply->pairing_public_key, code == "000000" ? "000001" : "000000"));
+    const std::string wrong = code == "000000" ? "000001" : "000000";
     for (int i = 0; i < LinkServer::kMaxPairingFailures; ++i) {
+      auto guesser = link::ClientSession::begin_pairing(random_fill);
+      reply = pair_start(client, guesser, "Stranger");
+      CHECK(reply && reply->pairing_open);
+      CHECK(reply && link::ClientSession::enter_pin(guesser, reply->pairing_public_key, wrong, "Stranger"));
       client.send(link::ClientSession::make_pair_request(guesser, "Stranger"));
       client.receive();
     }

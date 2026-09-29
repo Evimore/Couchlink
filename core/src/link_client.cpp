@@ -1,5 +1,7 @@
 #include "inputline/link_client.h"
 
+#include "inputline/cpace.h"
+
 namespace inputline::link {
 
   namespace {
@@ -41,6 +43,7 @@ namespace inputline::link {
   std::vector<std::uint8_t> ClientSession::make_pair_start(const PairingAttempt &attempt, const std::string &client_name) {
     Header header;
     header.type = Type::kPairStart;
+    header.client_id = attempt.client_id;
     return seal(header, encode(PairStart {attempt.nonce, client_name}), nullptr);
   }
 
@@ -54,13 +57,16 @@ namespace inputline::link {
     } while (attempt.client_id == 0);
     attempt.nonce = random_u64(random);
     random(attempt.secret.data(), attempt.secret.size());
-    attempt.public_key = crypto::x25519_public_key(attempt.secret);
     return attempt;
   }
 
-  bool ClientSession::enter_pin(PairingAttempt &attempt, const Key &host_public_key, const std::string &pin) {
+  bool ClientSession::enter_pin(PairingAttempt &attempt, const Key &host_share, const std::string &pin, const std::string &client_name) {
+    attempt.keys_ready = false;
+    const Key generator = pairing_generator(pin, attempt.client_id, attempt.nonce);
+    attempt.public_key = cpace::public_share(attempt.secret, generator);
+    attempt.host_share = host_share;
     const auto keys = derive_pairing_keys(
-      attempt.secret, host_public_key, attempt.client_id, attempt.public_key, host_public_key, attempt.nonce, pin
+      attempt.secret, host_share, attempt.client_id, attempt.public_key, host_share, attempt.nonce, client_name
     );
     attempt.keys_ready = keys.has_value();
     if (keys) {
@@ -101,15 +107,19 @@ namespace inputline::link {
     if (!attempt.keys_ready) {
       return std::nullopt;
     }
-    const auto datagram = open(data, length, &attempt.keys.result_key);
-    if (!datagram || datagram->header.type != Type::kPairResult || datagram->header.client_id != attempt.client_id) {
-      return std::nullopt;
+    // "Paired" must carry the host's confirmation; "wrong code" can't.
+    const Key failure_key = pairing_failure_key(attempt.client_id, attempt.public_key, attempt.host_share, attempt.nonce);
+    for (const Key *key : {&attempt.keys.result_key, &failure_key}) {
+      const auto datagram = open(data, length, key);
+      if (!datagram || datagram->header.type != Type::kPairResult || datagram->header.client_id != attempt.client_id) {
+        continue;
+      }
+      const auto result = decode_pair_result(datagram->payload);
+      if (result && result->accepted == (key == &attempt.keys.result_key)) {
+        return result->accepted;
+      }
     }
-    const auto result = decode_pair_result(datagram->payload);
-    if (!result) {
-      return std::nullopt;
-    }
-    return result->accepted;
+    return std::nullopt;
   }
 
   std::vector<std::uint8_t> ClientSession::make_hello(std::uint64_t now_us) {

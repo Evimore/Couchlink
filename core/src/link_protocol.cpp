@@ -1,6 +1,8 @@
 #include "inputline/link_protocol.h"
 
+#include "inputline/cpace.h"
 #include "inputline/sha256.h"
+#include "inputline/sha512.h"
 
 #include <algorithm>
 #include <cstring>
@@ -11,10 +13,10 @@ namespace inputline::link {
     constexpr char kSessionLabel[] = "inputline session v2";
     constexpr char kClientToHostLabel[] = "client to host";
     constexpr char kHostToClientLabel[] = "host to client";
-    constexpr char kPairLabel[] = "inputline pair v2";
+    constexpr char kPairLabel[] = "inputline pair v3";
     constexpr char kPairKeyLabel[] = "pairing key";
-    constexpr char kPairResultLabel[] = "pairing result";
-    constexpr char kPairProofLabel[] = "pairing proof";
+    constexpr char kPairFailureLabel[] = "pairing failure";
+    constexpr char kCpaceMacLabel[] = "CPaceMac";
 
     class Writer {
     public:
@@ -366,37 +368,74 @@ namespace inputline::link {
     return keys;
   }
 
+  namespace {
+    /** CPace's sid: the attempt's nonce. */
+    std::vector<std::uint8_t> pairing_sid(std::uint64_t nonce) {
+      Writer writer;
+      writer.u64(nonce);
+      return writer.take();
+    }
+
+    /** CPace's channel identifier: InputLine's pairing label and the client's ID. */
+    std::vector<std::uint8_t> pairing_ci(std::uint32_t client_id) {
+      Writer writer;
+      writer.bytes(kPairLabel, sizeof(kPairLabel) - 1);
+      writer.u32(client_id);
+      return writer.take();
+    }
+  }  // namespace
+
+  crypto::Key32 pairing_generator(const std::string &pin, std::uint32_t client_id, std::uint64_t nonce) {
+    return cpace::calculate_generator(std::vector<std::uint8_t>(pin.begin(), pin.end()), pairing_ci(client_id), pairing_sid(nonce));
+  }
+
   std::optional<PairingKeys> derive_pairing_keys(
-    const Key &own_secret, const Key &peer_public, std::uint32_t client_id, const Key &client_public,
-    const Key &host_public, std::uint64_t nonce, const std::string &pin
+    const Key &own_scalar, const Key &peer_share, std::uint32_t client_id, const Key &client_share,
+    const Key &host_share, std::uint64_t nonce, const std::string &client_name
   ) {
-    Key shared {};
-    if (!crypto::x25519(own_secret, peer_public, shared)) {
+    // ADa: the client's name, so it is authenticated too; ADb: nothing.
+    const std::vector<std::uint8_t> sid = pairing_sid(nonce);
+    const std::vector<std::uint8_t> ada(client_name.begin(), client_name.end());
+    auto isk = cpace::intermediate_key(own_scalar, peer_share, sid, client_share, ada, host_share, {});
+    if (!isk) {
       return std::nullopt;
     }
-    // Everything both sides saw: binds the keys to this exchange.
-    Writer transcript;
-    transcript.bytes(kPairLabel, sizeof(kPairLabel) - 1);
-    transcript.u32(client_id);
-    transcript.bytes(client_public.data(), client_public.size());
-    transcript.bytes(host_public.data(), host_public.size());
-    transcript.u64(nonce);
-    const auto base = transcript.take();
+    (void) client_id;  // bound through the generator's channel identifier
 
-    auto with = [&base](const char *label, std::size_t label_length, const std::string &extra) {
-      std::vector<std::uint8_t> message = base;
-      message.insert(message.end(), label, label + label_length);
-      message.insert(message.end(), extra.begin(), extra.end());
-      return message;
-    };
+    // Key confirmation as the draft suggests: mac_key = SHA-512("CPaceMac" || sid || ISK).
+    Sha512 mac;
+    mac.update(kCpaceMacLabel, sizeof(kCpaceMacLabel) - 1);
+    mac.update(sid.data(), sid.size());
+    mac.update(isk->data(), isk->size());
+    auto mac_key = mac.finish();
 
     PairingKeys keys;
-    keys.pairing_key = hmac_key(shared.data(), shared.size(), with(kPairKeyLabel, sizeof(kPairKeyLabel) - 1, pin));
-    keys.result_key = hmac_key(shared.data(), shared.size(), with(kPairResultLabel, sizeof(kPairResultLabel) - 1, {}));
-    const Key proof = hmac_key(keys.pairing_key.data(), keys.pairing_key.size(), with(kPairProofLabel, sizeof(kPairProofLabel) - 1, {}));
-    std::memcpy(keys.proof.data(), proof.data(), keys.proof.size());
-    shared.fill(0);
+    std::vector<std::uint8_t> label(kPairLabel, kPairLabel + sizeof(kPairLabel) - 1);
+    label.insert(label.end(), kPairKeyLabel, kPairKeyLabel + sizeof(kPairKeyLabel) - 1);
+    keys.pairing_key = hmac_key(isk->data(), isk->size(), label);
+    // Each side's tag covers its own message: lv_cat(Ya, ADa) and lv_cat(Yb, ADb).
+    using Bytes = cpace::Bytes;
+    const Key client_tag = hmac_key(mac_key.data(), mac_key.size(), cpace::lv_cat({Bytes(client_share.begin(), client_share.end()), ada}));
+    std::memcpy(keys.proof.data(), client_tag.data(), keys.proof.size());
+    keys.result_key = hmac_key(mac_key.data(), mac_key.size(), cpace::lv_cat({Bytes(host_share.begin(), host_share.end()), {}}));
+    isk->fill(0);
+    mac_key.fill(0);
     return keys;
+  }
+
+  Key pairing_failure_key(std::uint32_t client_id, const Key &client_share, const Key &host_share, std::uint64_t nonce) {
+    Writer transcript;
+    transcript.bytes(kPairLabel, sizeof(kPairLabel) - 1);
+    transcript.bytes(kPairFailureLabel, sizeof(kPairFailureLabel) - 1);
+    transcript.u32(client_id);
+    transcript.bytes(client_share.data(), client_share.size());
+    transcript.bytes(host_share.data(), host_share.size());
+    transcript.u64(nonce);
+    const auto message = transcript.take();
+    const auto digest = Sha256::hash(message.data(), message.size());
+    Key key {};
+    std::memcpy(key.data(), digest.data(), key.size());
+    return key;
   }
 
   Compatibility check_compatibility(const ProbeReply &reply, std::uint8_t client_version) {

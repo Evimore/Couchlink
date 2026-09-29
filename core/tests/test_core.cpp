@@ -1,5 +1,6 @@
 // Core library tests; run with `ctest` or the inputline_core_tests binary.
 
+#include "inputline/cpace.h"
 #include "inputline/feature_responder.h"
 #include "inputline/report_converter.h"
 #include "inputline/link_protocol.h"
@@ -520,22 +521,32 @@ namespace {
     CHECK(s1.client_to_host != derive_session_keys(test_key(0x43), 1, 2).client_to_host);
     CHECK(s1.client_to_host != key);
 
-    // Pairing: both sides derive the same keys from their own secret and the
-    // other's public key; the code changes the pairing key, not the result key.
+    // Pairing (CPace): with the same code, ID and nonce both sides derive
+    // the same keys; a different code or ID gives different shares and keys.
     const auto client_secret = test_key(0x11);
     const auto host_secret = test_key(0x22);
-    const auto client_public = inputline::crypto::x25519_public_key(client_secret);
-    const auto host_public = inputline::crypto::x25519_public_key(host_secret);
-    const auto on_client = derive_pairing_keys(client_secret, host_public, 7, client_public, host_public, 99, "123456");
-    const auto on_host = derive_pairing_keys(host_secret, client_public, 7, client_public, host_public, 99, "123456");
+    auto shares = [&](const std::string &client_pin, const std::string &host_pin, std::uint32_t id) {
+      const Key client_share = inputline::cpace::public_share(client_secret, pairing_generator(client_pin, id, 99));
+      const Key host_share = inputline::cpace::public_share(host_secret, pairing_generator(host_pin, id, 99));
+      return std::make_pair(client_share, host_share);
+    };
+    const auto [client_share, host_share] = shares("123456", "123456", 7);
+    const auto on_client = derive_pairing_keys(client_secret, host_share, 7, client_share, host_share, 99, "iPad");
+    const auto on_host = derive_pairing_keys(host_secret, client_share, 7, client_share, host_share, 99, "iPad");
     CHECK(on_client && on_host);
     CHECK(on_client->pairing_key == on_host->pairing_key && on_client->proof == on_host->proof && on_client->result_key == on_host->result_key);
-    const auto wrong_code = derive_pairing_keys(host_secret, client_public, 7, client_public, host_public, 99, "123457");
-    CHECK(wrong_code && wrong_code->proof != on_client->proof && wrong_code->pairing_key != on_client->pairing_key);
-    CHECK(wrong_code->result_key == on_client->result_key);
-    const auto other_id = derive_pairing_keys(host_secret, client_public, 8, client_public, host_public, 99, "123456");
-    CHECK(other_id && other_id->proof != on_client->proof);
-    CHECK(!derive_pairing_keys(host_secret, Key {}, 7, Key {}, host_public, 99, "123456").has_value());
+    const auto [wrong_client, right_host] = shares("123457", "123456", 7);
+    const auto guess_client = derive_pairing_keys(client_secret, right_host, 7, wrong_client, right_host, 99, "iPad");
+    const auto guess_host = derive_pairing_keys(host_secret, wrong_client, 7, wrong_client, right_host, 99, "iPad");
+    CHECK(guess_client && guess_host && guess_client->proof != guess_host->proof && guess_client->pairing_key != guess_host->pairing_key);
+    CHECK(guess_client->result_key != guess_host->result_key);
+    // The client's name is authenticated too.
+    const auto renamed = derive_pairing_keys(host_secret, client_share, 7, client_share, host_share, 99, "Not iPad");
+    CHECK(renamed && renamed->proof != on_client->proof);
+    // Nothing on the wire equals the code's generator or the pairing key.
+    CHECK(client_share != pairing_generator("123456", 7, 99) && client_share != on_client->pairing_key);
+    CHECK(!derive_pairing_keys(host_secret, Key {}, 7, Key {}, host_share, 99, "iPad").has_value());
+    CHECK(pairing_failure_key(7, client_share, host_share, 99) != on_client->result_key);
 
     const auto hex_key = to_hex(key.data(), key.size());
     CHECK(key_from_hex(hex_key) == key);

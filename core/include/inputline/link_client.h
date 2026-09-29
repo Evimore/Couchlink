@@ -40,12 +40,17 @@ namespace inputline::link {
     /** Generate a random 6-digit pairing code (the host shows it, the user types it on the client). */
     static std::string new_pin(const RandomSource &random);
 
-    /** One pairing attempt: the client's temporary key pair and, once the code is entered, the keys. */
+    /**
+     * One pairing attempt: the client's ID, a fresh nonce and CPace secret, and
+     * once the code is entered, its share and the keys. After a wrong code,
+     * start a new attempt (the host discards its side of this one).
+     */
     struct PairingAttempt {
       std::uint32_t client_id = 0;
       std::uint64_t nonce = 0;
-      Key secret {};  ///< temporary X25519 secret, used for this attempt only
-      Key public_key {};
+      Key secret {};  ///< CPace secret, used for this attempt only
+      Key public_key {};  ///< CPace share, known once the code is entered
+      Key host_share {};
       bool keys_ready = false;
       PairingKeys keys;
       Pairing pairing() const {
@@ -55,19 +60,19 @@ namespace inputline::link {
 
     static PairingAttempt begin_pairing(const RandomSource &random);
 
-    /** Ask the host to open pairing and show a code; it answers with a ProbeReply carrying its key. */
+    /** Ask the host to open pairing and show a code; it answers with a ProbeReply carrying its share. */
     static std::vector<std::uint8_t> make_pair_start(const PairingAttempt &attempt, const std::string &client_name);
 
     /**
-     * Combine the host's temporary key (from its ProbeReply) with the code the user typed.
-     * @return false if the host's key is invalid.
+     * Run CPace with the host's share (from its ProbeReply) and the code the user typed.
+     * @return false if the host's share is invalid.
      */
-    static bool enter_pin(PairingAttempt &attempt, const Key &host_public_key, const std::string &pin);
+    static bool enter_pin(PairingAttempt &attempt, const Key &host_share, const std::string &pin, const std::string &client_name);
 
     /** Requires enter_pin() first. */
     static std::vector<std::uint8_t> make_pair_request(const PairingAttempt &attempt, const std::string &client_name);
 
-    /** @return true/false for an authentic PairResult, nullopt for anything else. */
+    /** @return true (paired) or false (wrong code) for a PairResult about this attempt, nullopt for anything else. */
     static std::optional<bool> parse_pair_result(const std::uint8_t *data, std::size_t length, const PairingAttempt &attempt);
 
     // ---- Session ------------------------------------------------------------
