@@ -40,9 +40,10 @@ Steam Link is the only streaming app that brings the Steam Controller across wit
 
 ### 1. Set up the PC
 
-Download **InputLine-Setup** (`.exe`) from [Releases](../../releases) and run it. If Windows says it "protected your PC", click **More info → Run anyway** (the installer isn't code-signed yet).
+1. Install [**usbip-win2**](https://github.com/vadimgrn/usbip-win2/releases) (0.9.7 or newer). It lets InputLine plug a virtual controller into Windows; its drivers are signed by Microsoft.
+2. Download the **InputLine-Setup** installer (`.msi`) from [Releases](../../releases) and run it. If Windows says it "protected your PC", click **More info → Run anyway** (the installer isn't code-signed yet).
 
-It first installs [usbip-win2](https://github.com/vadimgrn/usbip-win2), which lets InputLine plug a virtual controller into Windows (its drivers are signed by Microsoft), with its own setup window; then InputLine. Restart the PC when it asks.
+The order doesn't matter: the installer's last screen says whether usbip-win2 is there, and until it is, InputLine's icon next to the clock shows a red mark with a download link.
 
 That's all on the PC. InputLine now runs in the background and starts with Windows. More in the [Windows setup guide](docs/host-setup-windows.md).
 

@@ -14,6 +14,7 @@
 #include "inputline/feature_responder.h"
 #include "inputline/link_client.h"
 #include "inputline/test_pattern.h"
+#include "usbip_attach.h"
 #include "usbip_server.h"
 
 #include <algorithm>
@@ -30,6 +31,7 @@
 #include <iostream>
 #include <sstream>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -285,6 +287,27 @@ namespace {
     out << line << "\n";
   }
 
+  /** Log usbip-win2's state and, if something is wrong, say so on screen. */
+  void report_usbip(const UsbipCheck &usbip) {
+    switch (usbip.state) {
+      case UsbipCheck::State::kOk:
+        log::info("usbip-win2 ", usbip.version.empty() ? std::string("is installed") : usbip.version + " is installed");
+        break;
+      case UsbipCheck::State::kMissing:
+        log::warn("usbip-win2 is not installed: InputLine can't plug controllers into Windows. Get it from ", kUsbipDownloadUrl);
+        desktop::show_notification("InputLine needs usbip-win2",
+                                   "It plugs the controller into Windows. Click to download it; InputLine starts working once it's installed.",
+                                   kUsbipDownloadUrl);
+        break;
+      case UsbipCheck::State::kTooOld:
+        log::warn("usbip-win2 ", usbip.version, " is too old for InputLine (", kMinUsbipVersion, " or newer needed). Get it from ", kUsbipDownloadUrl);
+        desktop::show_notification("usbip-win2 is too old for InputLine",
+                                   "You have " + usbip.version + "; InputLine needs " + kMinUsbipVersion + " or newer. Click to download it.",
+                                   kUsbipDownloadUrl);
+        break;
+    }
+  }
+
   void show_code(const std::string &client_name, const std::string &code) {
     std::printf(
       "\n  Pairing code for %s:  %.3s %s\n"
@@ -523,18 +546,32 @@ namespace {
 
     log::info("ready: ", store.list().size(), " paired client(s). Press Ctrl+C to stop.");
     auto next_status = std::chrono::steady_clock::now();
+    auto next_usbip_check = next_status;
+    UsbipCheck usbip;
+    std::optional<UsbipCheck::State> usbip_reported;
     while (!g_quit) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       if (!service || status_path.empty() || std::chrono::steady_clock::now() < next_status) {
         continue;
       }
       next_status = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      // usbip-win2 can be installed (or removed) while InputLine runs.
+      if (std::chrono::steady_clock::now() >= next_usbip_check) {
+        next_usbip_check = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        usbip = check_usbip(args.usbip_exe);
+        if (usbip_reported != usbip.state) {
+          usbip_reported = usbip.state;
+          report_usbip(usbip);
+        }
+      }
       const auto link = server->status();
       ServiceStatus status;
       status.version = INPUTLINE_VERSION;
       status.time = static_cast<std::int64_t>(std::time(nullptr));
       status.controllers = link.controllers;
       status.devices = link.clients;
+      status.usbip = usbip.state == UsbipCheck::State::kOk ? "ok" : usbip.state == UsbipCheck::State::kMissing ? "missing" : "old";
+      status.usbip_version = usbip.version;
       if (const auto release = updates.available()) {
         status.update_version = release->version;
         status.update_url = release->url;

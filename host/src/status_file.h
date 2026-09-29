@@ -10,6 +10,8 @@
  *   device=<name of a connected device>      (one line each)
  *   update=0.3.1
  *   update_url=https://github.com/...
+ *   usbip=ok | missing | old        (usbip-win2)
+ *   usbip_version=0.9.8.1
  */
 #pragma once
 
@@ -27,6 +29,8 @@ namespace inputline {
     std::vector<std::string> devices;
     std::string update_version;
     std::string update_url;
+    std::string usbip = "ok";  ///< "ok", "missing" or "old"
+    std::string usbip_version;
   };
 
   std::string format_status(const ServiceStatus &status);

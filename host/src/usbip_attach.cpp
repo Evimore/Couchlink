@@ -1,6 +1,7 @@
 #include "usbip_attach.h"
 
 #include "log.h"
+#include "inputline/version.h"
 
 #include <filesystem>
 
@@ -28,6 +29,45 @@ namespace inputline {
     return "usbip";
 #endif
   }
+
+#ifdef _WIN32
+  namespace {
+    std::wstring widen_path(const std::string &text);
+  }
+
+  UsbipCheck check_usbip(const std::string &executable) {
+    UsbipCheck check;
+    std::wstring path = widen_path(executable.empty() ? default_usbip_executable() : executable);
+    std::error_code error;
+    if (!std::filesystem::exists(std::filesystem::path(path), error)) {
+      // Not where usbip-win2 installs it: maybe on the PATH.
+      wchar_t found[MAX_PATH] = {};
+      if (SearchPathW(nullptr, path.c_str(), nullptr, MAX_PATH, found, nullptr) == 0) {
+        check.state = UsbipCheck::State::kMissing;
+        return check;
+      }
+      path = found;
+    }
+    DWORD ignored = 0;
+    const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+    std::vector<std::uint8_t> info(size);
+    VS_FIXEDFILEINFO *fixed = nullptr;
+    UINT fixed_size = 0;
+    if (size != 0 && GetFileVersionInfoW(path.c_str(), 0, size, info.data()) &&
+        VerQueryValueW(info.data(), L"\\", reinterpret_cast<void **>(&fixed), &fixed_size) && fixed != nullptr) {
+      check.version = std::to_string(HIWORD(fixed->dwFileVersionMS)) + "." + std::to_string(LOWORD(fixed->dwFileVersionMS)) + "." +
+                      std::to_string(HIWORD(fixed->dwFileVersionLS)) + "." + std::to_string(LOWORD(fixed->dwFileVersionLS));
+      if (compare_versions(check.version, kMinUsbipVersion) < 0) {
+        check.state = UsbipCheck::State::kTooOld;
+      }
+    }
+    return check;
+  }
+#else
+  UsbipCheck check_usbip(const std::string &) {
+    return {};
+  }
+#endif
 
   std::vector<std::string> attach_command(const AttachOptions &options, const std::string &busid, bool with_extras) {
     std::vector<std::string> argv {
@@ -108,6 +148,10 @@ namespace inputline {
       std::wstring out(static_cast<std::size_t>(length), L'\0');
       MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length);
       return out;
+    }
+
+    std::wstring widen_path(const std::string &text) {
+      return widen(text);
     }
 
     /** Quote one argument following the MSVC CommandLineToArgvW rules. */

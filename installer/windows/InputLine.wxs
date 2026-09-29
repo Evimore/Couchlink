@@ -6,11 +6,8 @@
       -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext
       -d Version=1.2.3 -d BinDir=build/host/Release -d RootDir=.
       -d RepoUrl=https://github.com/OWNER/REPO -o InputLine-Setup.msi
-
-  Test installs without usbip-win2 (CI): msiexec /i InputLine-Setup.msi SKIPUSBIPCHECK=1
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
      xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
 
@@ -31,14 +28,22 @@
     <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
     <Property Id="ARPHELPLINK" Value="$(var.RepoUrl)/blob/main/docs/host-setup-windows.md" />
 
-    <!-- usbip-win2 attaches the virtual controller; without it nothing reaches Steam. -->
+    <!--
+      usbip-win2 plugs the virtual controller into Windows. InputLine installs
+      without it (in any order); the last screen says whether it is there and
+      new enough, and InputLine keeps checking once it runs.
+    -->
     <Property Id="USBIPEXE">
       <DirectorySearch Id="UsbipFolder" Path="[ProgramFiles64Folder]USBip" Depth="0">
         <FileSearch Name="usbip.exe" />
       </DirectorySearch>
     </Property>
-    <Launch Condition="Installed OR USBIPEXE OR SKIPUSBIPCHECK"
-            Message="InputLine needs usbip-win2, which plugs the virtual Steam Controller into Windows. Install it from https://github.com/vadimgrn/usbip-win2/releases, then run this installer again." />
+    <!-- 0.9.7 or newer (MinVersion is exclusive, hence 0.9.6.65535). -->
+    <Property Id="USBIPNEWENOUGH">
+      <DirectorySearch Id="UsbipFolderVersion" Path="[ProgramFiles64Folder]USBip" Depth="0">
+        <FileSearch Name="usbip.exe" MinVersion="0.9.6.65535" />
+      </DirectorySearch>
+    </Property>
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="InputLine">
@@ -125,7 +130,93 @@
       <Custom Action="RemoveLegacyInstall" After="StopServices" Condition="NOT Installed" />
     </InstallExecuteSequence>
 
-    <ui:WixUI Id="WixUI_Minimal" />
+    <UIRef Id="InputLineUI" />
     <WixVariable Id="WixUILicenseRtf" Value="$(var.RootDir)\installer\windows\License.rtf" />
   </Package>
+
+  <!--
+    WiX's WixUI_Minimal (licence, progress, finish), with our own last screen:
+    it says whether usbip-win2 is installed (green), too old (amber) or
+    missing (red), with a download link.
+  -->
+  <Fragment>
+    <UI Id="InputLineUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Tahoma" Size="8" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Tahoma" Size="12" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Tahoma" Size="9" Bold="yes" />
+      <TextStyle Id="InputLine_Ok" FaceName="Tahoma" Size="9" Bold="yes" Red="30" Green="130" Blue="50" />
+      <TextStyle Id="InputLine_Warning" FaceName="Tahoma" Size="9" Bold="yes" Red="185" Green="110" Blue="0" />
+      <TextStyle Id="InputLine_Error" FaceName="Tahoma" Size="9" Bold="yes" Red="200" Green="30" Blue="30" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FatalError" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="PrepareDlg" />
+      <DialogRef Id="ProgressDlg" />
+      <DialogRef Id="ResumeDlg" />
+      <DialogRef Id="UserExit" />
+      <DialogRef Id="WelcomeDlg" />
+      <DialogRef Id="WelcomeEulaDlg" />
+
+      <Publish Dialog="WelcomeEulaDlg" Control="Print" Event="DoAction" Value="WixUIPrintEula_X64" />
+      <Publish Dialog="InputLineExitDlg" Control="Finish" Event="EndDialog" Value="Return" Order="999" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceWelcomeDlg" Control="Next" Event="NewDialog" Value="MaintenanceTypeDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RepairButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="RemoveButton" Event="NewDialog" Value="VerifyReadyDlg" />
+      <Publish Dialog="MaintenanceTypeDlg" Control="Back" Event="NewDialog" Value="MaintenanceWelcomeDlg" />
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="VerifyReadyDlg" Condition="Installed AND PATCH" />
+      <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2" Condition="Installed AND PATCH" />
+
+      <Dialog Id="InputLineExitDlg" Width="370" Height="270" Title="!(loc.ExitDialog_Title)">
+        <Control Id="Finish" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Cancel="yes" Text="!(loc.WixUIFinish)" />
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUICancel)" />
+        <Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="!(loc.ExitDialogBitmap)" />
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Disabled="yes" Text="!(loc.WixUIBack)" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Title" Type="Text" X="135" Y="20" Width="220" Height="60" Transparent="yes" NoPrefix="yes" Text="!(loc.ExitDialogTitle)" />
+        <Control Id="Description" Type="Text" X="135" Y="70" Width="220" Height="30" Transparent="yes" NoPrefix="yes" Text="!(loc.ExitDialogDescription)" />
+
+        <!-- usbip-win2: green, amber or red (after installing, not after removing or repairing) -->
+        <Control Id="UsbipOk" Type="Text" X="135" Y="110" Width="220" Height="14" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="{\InputLine_Ok}usbip-win2 is installed"
+                 ShowCondition="NOT Installed AND USBIPNEWENOUGH" />
+        <Control Id="UsbipOkText" Type="Text" X="135" Y="126" Width="220" Height="40" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="InputLine is ready. Open the InputLine app on your iPad or iPhone and tap this PC."
+                 ShowCondition="NOT Installed AND USBIPNEWENOUGH" />
+
+        <Control Id="UsbipOld" Type="Text" X="135" Y="110" Width="220" Height="14" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="{\InputLine_Warning}usbip-win2 is too old for InputLine"
+                 ShowCondition="NOT Installed AND USBIPEXE AND NOT USBIPNEWENOUGH" />
+        <Control Id="UsbipOldText" Type="Text" X="135" Y="126" Width="220" Height="40" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="InputLine needs usbip-win2 0.9.7 or newer to plug the controller into Windows. Install a newer version; InputLine picks it up by itself."
+                 ShowCondition="NOT Installed AND USBIPEXE AND NOT USBIPNEWENOUGH" />
+
+        <Control Id="UsbipMissing" Type="Text" X="135" Y="110" Width="220" Height="14" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="{\InputLine_Error}usbip-win2 is not installed"
+                 ShowCondition="NOT Installed AND NOT USBIPEXE" />
+        <Control Id="UsbipMissingText" Type="Text" X="135" Y="126" Width="220" Height="40" Transparent="yes" NoPrefix="yes" Hidden="yes"
+                 Text="InputLine needs it to plug the controller into Windows. Install it now or later; InputLine picks it up by itself."
+                 ShowCondition="NOT Installed AND NOT USBIPEXE" />
+
+        <Control Id="UsbipLink" Type="Hyperlink" X="135" Y="170" Width="220" Height="14" Hidden="yes"
+                 Text="&lt;a href=&quot;https://github.com/vadimgrn/usbip-win2/releases&quot;&gt;Download usbip-win2&lt;/a&gt;"
+                 ShowCondition="NOT Installed AND NOT USBIPNEWENOUGH" />
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="override WelcomeDlg" Before="WelcomeEulaDlg" Condition="Installed AND PATCH" />
+        <Show Dialog="InputLineExitDlg" OnExit="success" />
+      </InstallUISequence>
+      <AdminUISequence>
+        <Show Dialog="InputLineExitDlg" OnExit="success" />
+      </AdminUISequence>
+
+      <Property Id="ARPNOMODIFY" Value="1" />
+    </UI>
+
+    <UIRef Id="WixUI_Common" />
+  </Fragment>
 </Wix>

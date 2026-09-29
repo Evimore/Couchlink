@@ -4,6 +4,7 @@
 #include "log.h"
 #include "status_file.h"
 #include "update_check.h"
+#include "usbip_attach.h"
 
 #ifdef _WIN32
   #include <windows.h>
@@ -14,6 +15,8 @@
   #include <wtsapi32.h>
 
   #include <algorithm>
+  #include <cmath>
+  #include <cstdint>
   #include <ctime>
   #include <map>
   #include <mutex>
@@ -109,6 +112,7 @@ namespace inputline::tray {
       kMenuGuide,
       kMenuUpdate,
       kMenuHide,
+      kMenuUsbip,
     };
 
     struct TrayState {
@@ -119,13 +123,125 @@ namespace inputline::tray {
       std::wstring summary;
       std::wstring notification_text;
       std::wstring notification_url;
+      HICON normal_icon = nullptr;
+      HICON warning_icon = nullptr;  ///< with a red badge: something needs the user
+      std::wstring problem;          ///< what the badge is about, for the menu and tooltip
     };
 
     TrayState *g_tray = nullptr;
 
+    /** Only ever open InputLine's own pages and usbip-win2's download page. */
     bool safe_url(const std::wstring &url) {
-      const std::wstring prefix = desktop::widen(std::string(update::kRepositoryUrl) + "/");
-      return url.compare(0, prefix.size(), prefix) == 0;
+      for (const std::string &allowed : {std::string(update::kRepositoryUrl) + "/", std::string(kUsbipDownloadUrl)}) {
+        const std::wstring prefix = desktop::widen(allowed);
+        if (url.compare(0, prefix.size(), prefix) == 0) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    /** @p base with a small red X badge in its top left corner. */
+    HICON badged_icon(HICON base, int size) {
+      BITMAPINFO info {};
+      info.bmiHeader.biSize = sizeof(info.bmiHeader);
+      info.bmiHeader.biWidth = size;
+      info.bmiHeader.biHeight = -size;  // top-down
+      info.bmiHeader.biPlanes = 1;
+      info.bmiHeader.biBitCount = 32;
+      info.bmiHeader.biCompression = BI_RGB;
+      void *bits = nullptr;
+      HDC screen = GetDC(nullptr);
+      HBITMAP color = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+      ReleaseDC(nullptr, screen);
+      if (color == nullptr || bits == nullptr) {
+        return nullptr;
+      }
+      // Copy the icon's own pixels, alpha included (drawing it can lose the alpha).
+      auto *pixels = static_cast<std::uint32_t *>(bits);
+      ICONINFO base_info {};
+      if (!GetIconInfo(base, &base_info)) {
+        DeleteObject(color);
+        return nullptr;
+      }
+      HDC dc = CreateCompatibleDC(nullptr);
+      const bool copied = GetDIBits(dc, base_info.hbmColor, 0, static_cast<UINT>(size), pixels, &info, DIB_RGB_COLORS) != 0;
+      bool any_alpha = false;
+      for (int i = 0; copied && i < size * size; ++i) {
+        any_alpha = any_alpha || (pixels[i] >> 24) != 0;
+      }
+      if (copied && !any_alpha) {
+        // An icon without alpha: its mask says which pixels show.
+        std::vector<std::uint32_t> mask_pixels(static_cast<std::size_t>(size) * size);
+        if (GetDIBits(dc, base_info.hbmMask, 0, static_cast<UINT>(size), mask_pixels.data(), &info, DIB_RGB_COLORS) != 0) {
+          for (int i = 0; i < size * size; ++i) {
+            pixels[i] = (mask_pixels[i] & 0xFFFFFF) == 0 ? pixels[i] | 0xFF000000 : 0;
+          }
+        }
+      }
+      DeleteDC(dc);
+      DeleteObject(base_info.hbmColor);
+      DeleteObject(base_info.hbmMask);
+      if (!copied) {
+        DeleteObject(color);
+        return nullptr;
+      }
+      // A red circle with a white X and ring, top left, drawn with 4x4
+      // samples per pixel so it stays readable at 16 pixels.
+      const double radius = size * (size < 20 ? 0.23 : 0.19);
+      const double ring = radius + std::max(0.9, size / 22.0);
+      const double arm = radius * 0.52;
+      const double half_stroke = std::max(0.55, size / 38.0);
+      // 0: outside, 1: white, 2: red
+      auto sample = [&](double x, double y) {
+        const double dx = x - ring;
+        const double dy = y - ring;
+        const double distance = std::sqrt(dx * dx + dy * dy);
+        if (distance <= radius) {
+          const double to_diagonal = std::min(std::abs(dx - dy), std::abs(dx + dy)) / std::sqrt(2.0);
+          return to_diagonal <= half_stroke && std::max(std::abs(dx), std::abs(dy)) <= arm ? 1 : 2;
+        }
+        return distance <= ring ? 1 : 0;
+      };
+      const int limit = static_cast<int>(std::ceil(2 * ring)) + 1;
+      for (int y = 0; y < std::min(size, limit); ++y) {
+        for (int x = 0; x < std::min(size, limit); ++x) {
+          int covered = 0;
+          double red = 0, green = 0, blue = 0;
+          for (int sy = 0; sy < 4; ++sy) {
+            for (int sx = 0; sx < 4; ++sx) {
+              const int kind = sample(x + (sx + 0.5) / 4, y + (sy + 0.5) / 4);
+              if (kind == 0) {
+                continue;
+              }
+              ++covered;
+              red += kind == 1 ? 255 : 0xE5;
+              green += kind == 1 ? 255 : 0x39;
+              blue += kind == 1 ? 255 : 0x35;
+            }
+          }
+          if (covered == 0) {
+            continue;
+          }
+          const double coverage = covered / 16.0;
+          std::uint32_t &pixel = pixels[y * size + x];
+          const double old_alpha = (pixel >> 24) & 0xFF;
+          const auto mix = [&](double badge, int shift) {
+            return static_cast<std::uint32_t>(badge / covered * coverage + ((pixel >> shift) & 0xFF) * (1 - coverage)) & 0xFF;
+          };
+          const auto alpha = static_cast<std::uint32_t>(std::max(old_alpha, 255 * coverage));
+          pixel = (alpha << 24) | (mix(red, 16) << 16) | (mix(green, 8) << 8) | mix(blue, 0);
+        }
+      }
+      HBITMAP mask = CreateBitmap(size, size, 1, 1, nullptr);
+      ICONINFO icon_info {};
+      icon_info.fIcon = TRUE;
+      icon_info.hbmColor = color;
+      icon_info.hbmMask = mask;
+      HICON icon = CreateIconIndirect(&icon_info);
+      DeleteObject(color);
+      DeleteObject(mask);
+      return icon;
     }
 
     void open_url(const std::wstring &url) {
@@ -174,9 +290,18 @@ namespace inputline::tray {
           tray.summary += tray.status.controllers == 1 ? L" (1 controller)" : L" (" + std::to_wstring(tray.status.controllers) + L" controllers)";
         }
       }
-      const std::wstring tip = L"InputLine: " + tray.summary;
-      if (wcsncmp(tray.icon.szTip, tip.c_str(), ARRAYSIZE(tray.icon.szTip) - 1) != 0) {
-        tray.icon.uFlags = NIF_TIP | NIF_SHOWTIP;
+      // usbip-win2 missing or too old: a badge, and the reason first in the tooltip and menu.
+      tray.problem.clear();
+      if (tray.running && tray.status.usbip == "missing") {
+        tray.problem = L"usbip-win2 isn't installed";
+      } else if (tray.running && tray.status.usbip == "old") {
+        tray.problem = L"usbip-win2 " + desktop::widen(tray.status.usbip_version) + L" is too old";
+      }
+      const std::wstring tip = L"InputLine: " + (tray.problem.empty() ? tray.summary : tray.problem);
+      HICON wanted = !tray.problem.empty() && tray.warning_icon != nullptr ? tray.warning_icon : tray.normal_icon;
+      if (wcsncmp(tray.icon.szTip, tip.c_str(), ARRAYSIZE(tray.icon.szTip) - 1) != 0 || tray.icon.hIcon != wanted) {
+        tray.icon.uFlags = NIF_TIP | NIF_SHOWTIP | NIF_ICON;
+        tray.icon.hIcon = wanted;
         wcsncpy_s(tray.icon.szTip, tip.c_str(), _TRUNCATE);
         Shell_NotifyIconW(NIM_MODIFY, &tray.icon);
       }
@@ -194,6 +319,13 @@ namespace inputline::tray {
       HMENU menu = CreatePopupMenu();
       const std::wstring title = L"InputLine " + desktop::widen(tray.running ? tray.status.version : std::string());
       AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, title.c_str());
+      std::wstring problem;
+      if (!tray.problem.empty()) {
+        problem = L"\u26A0 " + tray.problem + L": click to download it";
+        AppendMenuW(menu, MF_STRING, kMenuUsbip, problem.c_str());
+        AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"InputLine needs usbip-win2 " + desktop::widen(kMinUsbipVersion) + L" or newer to plug the controller into Windows").c_str());
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+      }
       AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, tray.summary.c_str());
       std::wstring update;
       if (tray.running && !tray.status.update_version.empty()) {
@@ -224,6 +356,9 @@ namespace inputline::tray {
           break;
         case kMenuUpdate:
           open_url(desktop::widen(tray.status.update_url));
+          break;
+        case kMenuUsbip:
+          open_url(desktop::widen(kUsbipDownloadUrl));
           break;
         case kMenuHide:
           set_hidden_by_user(true);
@@ -430,7 +565,9 @@ namespace inputline::tray {
       const int size = GetSystemMetrics(size_metric);
       return static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
     };
-    tray.icon.hIcon = load_icon(SM_CXSMICON);
+    tray.normal_icon = load_icon(SM_CXSMICON);
+    tray.warning_icon = tray.normal_icon != nullptr ? badged_icon(tray.normal_icon, GetSystemMetrics(SM_CXSMICON)) : nullptr;
+    tray.icon.hIcon = tray.normal_icon;
     tray.icon.hBalloonIcon = load_icon(SM_CXICON);
     wcsncpy_s(tray.icon.szTip, L"InputLine", _TRUNCATE);
     g_tray = &tray;
@@ -443,7 +580,7 @@ namespace inputline::tray {
     g_tray = nullptr;
     Shell_NotifyIconW(NIM_DELETE, &tray.icon);
     DestroyWindow(window);
-    for (HICON handle : {tray.icon.hIcon, tray.icon.hBalloonIcon}) {
+    for (HICON handle : {tray.normal_icon, tray.warning_icon, tray.icon.hBalloonIcon}) {
       if (handle != nullptr) {
         DestroyIcon(handle);
       }

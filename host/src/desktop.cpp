@@ -3,6 +3,7 @@
 #include "log.h"
 #include "tray.h"
 #include "update_check.h"
+#include "usbip_attach.h"
 
 #include <algorithm>
 #include <atomic>
@@ -192,10 +193,15 @@ namespace inputline::desktop {
       std::wstring url;
     };
 
-    /** Only ever open InputLine's own pages. */
+    /** Only ever open InputLine's own pages and usbip-win2's download page. */
     bool safe_url(const std::wstring &url) {
-      const std::wstring prefix = widen(std::string(update::kRepositoryUrl) + "/");
-      return url.compare(0, prefix.size(), prefix) == 0;
+      for (const std::string &allowed : {std::string(update::kRepositoryUrl) + "/", std::string(kUsbipDownloadUrl)}) {
+        const std::wstring prefix = widen(allowed);
+        if (url.compare(0, prefix.size(), prefix) == 0) {
+          return true;
+        }
+      }
+      return false;
     }
 
     /** Window of the notifier: the tray icon's messages and its timer. */

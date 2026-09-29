@@ -2,22 +2,21 @@
 
 You need Windows 10 (version 1809 or later) or Windows 11, with Steam installed.
 
-## 1. Install InputLine
+## 1. Install usbip-win2
 
-Download **`InputLine-Setup-vX.Y.Z.exe`** from [Releases](../../../releases) and run it.
-
-Windows may warn that it "protected your PC", because the installer isn't code-signed yet. Click **More info → Run anyway**.
-
-It installs two things:
-
-1. **usbip-win2** (version 0.9.8.1), if it isn't installed yet. It lets InputLine plug a virtual Steam Controller into Windows. Its drivers are signed by Microsoft, so Secure Boot and anti-cheat stay happy and no test-signing mode is needed. Its own setup window opens; its authors recommend creating a [restore point](https://support.microsoft.com/en-us/windows/create-a-system-restore-point-77e02e2a-3298-c869-9974-ef5658ea3be9) first, and USB devices pause for a moment while it installs. Restart the PC when asked. It stays installed if you remove InputLine.
-2. **InputLine** itself.
-
-Already have usbip-win2, or prefer to install it yourself from [its releases](https://github.com/vadimgrn/usbip-win2/releases)? Use **`InputLine-Setup-vX.Y.Z.msi`** instead, which installs InputLine only.
+Download the installer from [usbip-win2 releases](https://github.com/vadimgrn/usbip-win2/releases) (0.9.7 or newer) and install it. It lets InputLine plug a virtual Steam Controller into Windows. Its drivers are signed by Microsoft, so Secure Boot and anti-cheat stay happy and no test-signing mode is needed. Its authors recommend creating a [restore point](https://support.microsoft.com/en-us/windows/create-a-system-restore-point-77e02e2a-3298-c869-9974-ef5658ea3be9) first; USB devices pause for a moment while it installs.
 
 > HIDMaestro, which uses the same transport, pins usbip-win2 **0.9.7.5** and reports kernel-pool issues in 0.9.7.8. If attaching misbehaves, try another version and please open an issue with the details.
 
-The InputLine part:
+## 2. Install InputLine
+
+Download **`InputLine-Setup-vX.Y.Z.msi`** from [Releases](../../../releases) and run it.
+
+Windows may warn that it "protected your PC", because the installer isn't code-signed yet. Click **More info → Run anyway**.
+
+Steps 1 and 2 can go in either order. The installer's last screen says whether usbip-win2 is installed (green), too old (amber) or missing (red), with a download link. As long as it's missing or too old, InputLine's icon next to the clock shows a red mark, and its menu links to the download; InputLine picks usbip-win2 up by itself once it's installed.
+
+The installer:
 
 - installs `inputline-host` to `C:\Program Files\InputLine`,
 - runs it as the **InputLine** service: it starts with Windows, runs in the background, and restarts by itself if something goes wrong,
@@ -30,7 +29,7 @@ Its files are in `C:\ProgramData\InputLine`: the log (`inputline-host.log`), opt
 **Updating:** run the newer installer. Paired devices are kept.
 **Uninstalling:** *Settings → Apps → Installed apps → InputLine → Uninstall*. Paired devices stay in `C:\ProgramData\InputLine` in case you install again; delete that folder to remove them too.
 
-## 2. Pair your iPad or iPhone
+## 3. Pair your iPad or iPhone
 
 Open InputLine on the iPad or iPhone and tap your PC under **Found on this network** (or enter its address and tap **Connect**). The first time, a Windows notification on the PC shows a 6-digit code; type it into InputLine. (Missed it? Press Windows key + N to see your notifications.) From then on, the device connects by itself.
 
@@ -101,7 +100,7 @@ The log is `C:\ProgramData\InputLine\inputline-host.log` (the one from before th
 
 | Symptom | Try |
 |---|---|
-| The `.msi` says it needs usbip-win2 | Use the `.exe` installer, which includes it, or install [usbip-win2](https://github.com/vadimgrn/usbip-win2/releases) first. |
+| A red mark on the InputLine icon | usbip-win2 is missing or too old: the icon's menu says which and links to the download. Install it; InputLine notices within 30 seconds. |
 | `attach: ... failed` in the log | The `attach: usbip said` line just before it gives usbip's reason. Check that `C:\Program Files\USBip\usbip.exe` exists. If usbip-win2 lives elsewhere, add `--usbip-exe "C:\path\to\usbip.exe"` to `options.txt`. |
 | InputLine doesn't list the PC | Set the network's profile to **Private** in Windows settings (*Network & internet → your network*): Windows doesn't answer network discovery on Public networks. You can always enter the address instead. |
 | InputLine says the PC does not answer | Check that the InputLine service is running (`Get-Service InputLine`) and that the PC's firewall allows it (the installer adds a rule named *InputLine (UDP 48150)*). |

@@ -71,7 +71,11 @@ namespace {
     status.devices = {"Evi's iPad", "Line\nbreak"};
     status.update_version = "0.3.1";
     status.update_url = "https://github.com/Evimore/InputLine/releases/tag/v0.3.1";
+    status.usbip = "old";
+    status.usbip_version = "0.9.6.0";
     const auto parsed = parse_status(format_status(status));
+    CHECK(parsed.usbip == "old" && parsed.usbip_version == "0.9.6.0");
+    CHECK(parse_status("version=1\n").usbip == "ok");  // older services didn't say
     CHECK(parsed.version == "0.3.0" && parsed.time == 1'800'000'000 && parsed.controllers == 2);
     CHECK(parsed.devices.size() == 2 && parsed.devices[0] == "Evi's iPad" && parsed.devices[1] == "Line break");
     CHECK(parsed.update_version == "0.3.1" && parsed.update_url == status.update_url);

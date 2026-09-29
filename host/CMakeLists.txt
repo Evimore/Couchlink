@@ -19,7 +19,7 @@ target_include_directories(inputline_host PUBLIC src)
 target_link_libraries(inputline_host PUBLIC inputline_core Threads::Threads)
 target_compile_options(inputline_host PRIVATE ${INPUTLINE_WARNINGS})
 if(WIN32)
-  target_link_libraries(inputline_host PUBLIC ws2_32 user32 advapi32 wtsapi32 shell32 winhttp userenv)
+  target_link_libraries(inputline_host PUBLIC ws2_32 user32 advapi32 wtsapi32 shell32 winhttp userenv version)
   target_compile_definitions(inputline_host PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 endif()
 

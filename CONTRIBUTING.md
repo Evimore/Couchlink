@@ -32,6 +32,6 @@ ctest --test-dir build --output-on-failure
 
 ## Releasing
 
-On GitHub: **Actions → Release → Run workflow**, enter the version (for example `0.2.0`) and run it. It builds the Windows installers (`InputLine-Setup-vX.exe` with usbip-win2, `InputLine-Setup-vX.msi` without), a portable zip and the unsigned `InputLine-vX-iOS.ipa` from the latest `main`, then publishes them on the **Releases** page under the tag `v0.2.0`, with notes generated from the changes since the last release. A version such as `0.2.0-beta.1` becomes a pre-release. Pushing a `v…` tag does the same.
+On GitHub: **Actions → Release → Run workflow**, enter the version (for example `0.2.0`) and run it. It builds the Windows installer (`InputLine-Setup-vX.msi`), a portable zip and the unsigned `InputLine-vX-iOS.ipa` from the latest `main`, then publishes them on the **Releases** page under the tag `v0.2.0`, with notes generated from the changes since the last release. A version such as `0.2.0-beta.1` becomes a pre-release. Pushing a `v…` tag does the same.
 
 By contributing you agree that your contribution is licensed under the licence of the part you change: MIT for `core/` and `clients/`, GPL-3.0-or-later for `host/`.

@@ -1,6 +1,7 @@
 #include "status_file.h"
 
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -25,6 +26,10 @@ namespace inputline {
     out << "controllers=" << status.controllers << "\n";
     for (const auto &device : status.devices) {
       out << "device=" << one_line(device) << "\n";
+    }
+    out << "usbip=" << one_line(status.usbip) << "\n";
+    if (!status.usbip_version.empty()) {
+      out << "usbip_version=" << one_line(status.usbip_version) << "\n";
     }
     if (!status.update_version.empty()) {
       out << "update=" << one_line(status.update_version) << "\n";
@@ -59,6 +64,10 @@ namespace inputline {
         status.update_version = value;
       } else if (key == "update_url") {
         status.update_url = value;
+      } else if (key == "usbip") {
+        status.usbip = value;
+      } else if (key == "usbip_version") {
+        status.usbip_version = value;
       }
     }
     return status;

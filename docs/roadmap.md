@@ -24,7 +24,7 @@
 - [x] Tray icon with status, the pairing code and update notices; the service checks GitHub for new versions; the app says which side runs an older version
 - [x] Protocol version 3: pairing with CPace, a password-authenticated key exchange (checked against the CFRG draft's test vectors)
 - [x] Fuzzing in CI: link protocol, link server and USB/IP server
-- [x] InputLine-Setup.exe: usbip-win2 (pinned, hash-checked; CI checks it adds no root certificate) and InputLine in one installer
+- [x] usbip-win2 installed in either order: the installer's last screen shows its status (green, amber, red) with a download link; the tray icon shows a red mark and the link until it's there
 - [x] Windows installer (MSI): `inputline-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
 ## Phases
@@ -32,7 +32,7 @@
 | Phase | What | Status |
 |---|---|---|
 | 0 | InputLine app with background Bluetooth; timing measured on the device and at the PC | **Done** |
-| 1 | PC program: automatic discovery, installer with usbip-win2, update check (all done); code signing | In progress |
+| 1 | PC program: automatic discovery, installer, usbip-win2 status, update check (all done); code signing | In progress |
 | 2 | InputLine release: TestFlight, then a free App Store app | Later |
 | 3 | More bridges: desktop (Windows, Linux, Mac, Steam Deck; USB, Puck or Bluetooth), Android and Android TV | |
 | 4 | Optional: offer the host side to streaming hosts (Vibepollo, Apollo, Sunshine) as a built-in feature | |

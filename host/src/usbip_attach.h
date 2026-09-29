@@ -25,6 +25,27 @@ namespace inputline {
   /** Where usbip-win2 installs its CLI, or plain "usbip" on Linux. */
   std::string default_usbip_executable();
 
+  /** Older usbip-win2 releases use a different driver design than InputLine is made for. */
+  inline constexpr const char *kMinUsbipVersion = "0.9.7";
+  inline constexpr const char *kUsbipDownloadUrl = "https://github.com/vadimgrn/usbip-win2/releases";
+
+  struct UsbipCheck {
+    enum class State {
+      kOk,
+      kMissing,
+      kTooOld,
+    };
+    State state = State::kOk;
+    std::string version;  ///< e.g. "0.9.8.1", when known
+  };
+
+  /**
+   * @brief Whether usbip-win2 is installed and new enough (Windows).
+   * @param executable The configured usbip.exe, or empty for the default.
+   * Elsewhere always kOk: Linux's usbip comes with the system.
+   */
+  UsbipCheck check_usbip(const std::string &executable);
+
   /** Build the argument vector (argv[0] included) for an attach call. */
   std::vector<std::string> attach_command(const AttachOptions &options, const std::string &busid, bool with_extras);
 
