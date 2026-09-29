@@ -1,0 +1,462 @@
+// couchlink-host: receives Steam Controller reports from Couchlink clients and
+// presents them to Steam as a real wired Steam Controller.
+
+#include "client_store.h"
+#include "controller_backend.h"
+#include "desktop.h"
+#include "discovery.h"
+#include "link_server.h"
+#include "log.h"
+#include "net.h"
+#include "couchlink/feature_responder.h"
+#include "couchlink/link_client.h"
+#include "couchlink/test_pattern.h"
+#include "usbip_server.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <iostream>
+#include <memory>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
+
+#ifndef COUCHLINK_VERSION
+  #define COUCHLINK_VERSION "dev"
+#endif
+
+using namespace couchlink;
+
+namespace {
+
+  std::atomic<bool> g_quit {false};
+
+  void on_signal(int) {
+    g_quit = true;
+  }
+
+  struct Arguments {
+    std::string command = "run";
+    std::vector<std::string> positional;
+    std::uint16_t port = link::kDefaultPort;
+    std::string bind = "::";
+    std::uint16_t usbip_port = usbip::kDefaultPort;
+    std::string usbip_exe;
+    bool attach = true;
+    std::string config;
+    std::string name;
+    std::string pin;
+    bool verbose = false;
+    bool remote_pairing = true;
+    bool discovery = true;
+    bool hide_console = false;
+    std::string log_file;
+    int stats_seconds = 0;
+    std::set<std::uint8_t> blocked_settings {kSettingWirelessPacketVersion};
+  };
+
+  void print_usage() {
+    std::printf(
+      "Couchlink host " COUCHLINK_VERSION "\n"
+      "\n"
+      "Usage: couchlink-host [options] [command]\n"
+      "\n"
+      "Commands:\n"
+      "  run              Serve paired clients (default). An unpaired iPad / iPhone\n"
+      "                   can ask to pair: a code pops up on this PC's screen.\n"
+      "  pair             Like run, and show a pairing code right away.\n"
+      "  install          (Windows, as administrator) Start at every logon in the\n"
+      "                   background, and allow the link through the firewall.\n"
+      "  uninstall        Undo install. Paired devices are kept.\n"
+      "  clients          List paired clients.\n"
+      "  forget <id>      Remove a paired client.\n"
+      "  demo [seconds]   Plug in one virtual controller driven by a test pattern,\n"
+      "                   no client needed. Use it to check Steam recognises it.\n"
+      "\n"
+      "Options:\n"
+      "  --port N         UDP port clients connect to (default %u)\n"
+      "  --bind ADDRESS   Address to listen on (default: all)\n"
+      "  --usbip-port N   Loopback USB/IP port (default %u)\n"
+      "  --usbip-exe PATH usbip executable (default: usbip-win2 install / usbip)\n"
+      "  --no-attach      Export devices but do not run 'usbip attach'\n"
+      "  --config PATH    Paired-clients file (default: %s)\n"
+      "  --name NAME      Name shown to clients (default: computer name)\n"
+      "  --pin CODE       With 'pair': use this code instead of a random one\n"
+      "  --no-remote-pairing  Only pair through 'couchlink-host pair'\n"
+      "  --no-discovery   Don't announce this PC on the local network\n"
+      "  --log PATH       Write the log to a file\n"
+      "  --stats          Log report timing every 10 s (rate, gaps)\n"
+      "  --block-setting N  Never pass controller setting N from Steam to the\n"
+      "                   physical controller (repeatable; 49 is blocked by default)\n"
+      "  --allow-setting N  Pass setting N even if blocked by default\n"
+      "  --hide-console   Run without a console window\n"
+      "  --verbose        Debug logging\n"
+      "  --version        Print the version\n",
+      link::kDefaultPort,
+      usbip::kDefaultPort,
+      ClientStore::default_path().c_str()
+    );
+  }
+
+  bool parse_port(const char *text, std::uint16_t &out) {
+    char *end = nullptr;
+    const auto value = std::strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || value == 0 || value > 65535) {
+      return false;
+    }
+    out = static_cast<std::uint16_t>(value);
+    return true;
+  }
+
+  bool parse_arguments(int argc, char **argv, Arguments &args) {
+    bool have_command = false;
+    for (int i = 1; i < argc; ++i) {
+      const std::string arg = argv[i];
+      auto value = [&](const char *&out) {
+        if (i + 1 >= argc) {
+          std::fprintf(stderr, "%s needs a value\n", arg.c_str());
+          return false;
+        }
+        out = argv[++i];
+        return true;
+      };
+      const char *v = nullptr;
+      if (arg == "--help" || arg == "-h") {
+        print_usage();
+        std::exit(0);
+      } else if (arg == "--version") {
+        std::printf("%s\n", COUCHLINK_VERSION);
+        std::exit(0);
+      } else if (arg == "--port") {
+        if (!value(v) || !parse_port(v, args.port)) {
+          return false;
+        }
+      } else if (arg == "--usbip-port") {
+        if (!value(v) || !parse_port(v, args.usbip_port)) {
+          return false;
+        }
+      } else if (arg == "--bind") {
+        if (!value(v)) {
+          return false;
+        }
+        args.bind = v;
+      } else if (arg == "--usbip-exe") {
+        if (!value(v)) {
+          return false;
+        }
+        args.usbip_exe = v;
+      } else if (arg == "--config") {
+        if (!value(v)) {
+          return false;
+        }
+        args.config = v;
+      } else if (arg == "--name") {
+        if (!value(v)) {
+          return false;
+        }
+        args.name = v;
+      } else if (arg == "--pin") {
+        if (!value(v)) {
+          return false;
+        }
+        args.pin = v;
+      } else if (arg == "--log") {
+        if (!value(v)) {
+          return false;
+        }
+        args.log_file = v;
+      } else if (arg == "--no-attach") {
+        args.attach = false;
+      } else if (arg == "--no-remote-pairing") {
+        args.remote_pairing = false;
+      } else if (arg == "--no-discovery") {
+        args.discovery = false;
+      } else if (arg == "--hide-console") {
+        args.hide_console = true;
+      } else if (arg == "--stats") {
+        args.stats_seconds = 10;
+      } else if (arg == "--block-setting" || arg == "--allow-setting") {
+        if (!value(v)) {
+          return false;
+        }
+        char *end = nullptr;
+        const auto setting = std::strtoul(v, &end, 10);
+        if (end == v || *end != '\0' || setting > 255) {
+          std::fprintf(stderr, "%s needs a setting number (0-255)\n", arg.c_str());
+          return false;
+        }
+        if (arg == "--block-setting") {
+          args.blocked_settings.insert(static_cast<std::uint8_t>(setting));
+        } else {
+          args.blocked_settings.erase(static_cast<std::uint8_t>(setting));
+        }
+      } else if (arg == "--verbose" || arg == "-v") {
+        args.verbose = true;
+      } else if (!arg.empty() && arg[0] == '-') {
+        std::fprintf(stderr, "unknown option %s\n", arg.c_str());
+        return false;
+      } else if (!have_command) {
+        args.command = arg;
+        have_command = true;
+      } else {
+        args.positional.push_back(arg);
+      }
+    }
+    return true;
+  }
+
+  std::string computer_name() {
+#ifdef _WIN32
+    const char *name = std::getenv("COMPUTERNAME");
+#else
+    const char *name = std::getenv("HOSTNAME");
+#endif
+    return name && *name ? name : "Gaming PC";
+  }
+
+  bool valid_pin(const std::string &pin) {
+    if (pin.size() != link::kPinDigits) {
+      return false;
+    }
+    for (char c : pin) {
+      if (c < '0' || c > '9') {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void show_code(const std::string &client_name, const std::string &code) {
+    std::printf(
+      "\n  Pairing code for %s:  %.3s %s\n"
+      "  Type it into Couchlink on your iPad or iPhone (it works for 2 minutes).\n\n",
+      client_name.c_str(), code.c_str(), code.size() > 3 ? code.c_str() + 3 : ""
+    );
+    std::fflush(stdout);
+    log::info("pairing code shown for '", client_name, "'");
+    desktop::show_pairing_code(client_name, code);
+  }
+
+  /** The arguments 'install' passes on to the background 'run'. */
+  std::vector<std::string> run_arguments(const Arguments &args) {
+    std::vector<std::string> out;
+    if (args.port != link::kDefaultPort) {
+      out.insert(out.end(), {"--port", std::to_string(args.port)});
+    }
+    if (args.usbip_port != usbip::kDefaultPort) {
+      out.insert(out.end(), {"--usbip-port", std::to_string(args.usbip_port)});
+    }
+    if (!args.bind.empty() && args.bind != "::") {
+      out.insert(out.end(), {"--bind", args.bind});
+    }
+    if (!args.usbip_exe.empty()) {
+      out.insert(out.end(), {"--usbip-exe", std::filesystem::absolute(args.usbip_exe).string()});
+    }
+    if (!args.config.empty()) {
+      out.insert(out.end(), {"--config", std::filesystem::absolute(args.config).string()});
+    }
+    if (!args.name.empty()) {
+      out.insert(out.end(), {"--name", args.name});
+    }
+    if (!args.remote_pairing) {
+      out.emplace_back("--no-remote-pairing");
+    }
+    if (!args.discovery) {
+      out.emplace_back("--no-discovery");
+    }
+    if (args.verbose) {
+      out.emplace_back("--verbose");
+    }
+    if (args.stats_seconds > 0) {
+      out.emplace_back("--stats");
+    }
+    const std::set<std::uint8_t> defaults {kSettingWirelessPacketVersion};
+    for (const auto setting : args.blocked_settings) {
+      if (defaults.count(setting) == 0) {
+        out.insert(out.end(), {"--block-setting", std::to_string(setting)});
+      }
+    }
+    for (const auto setting : defaults) {
+      if (args.blocked_settings.count(setting) == 0) {
+        out.insert(out.end(), {"--allow-setting", std::to_string(setting)});
+      }
+    }
+    return out;
+  }
+
+  int list_clients(ClientStore &store) {
+    const auto clients = store.list();
+    if (clients.empty()) {
+      std::printf("No paired clients. Run 'couchlink-host pair' to add one.\n");
+      return 0;
+    }
+    for (const auto &client : clients) {
+      std::printf("%08x  %s\n", client.client_id, client.name.c_str());
+    }
+    return 0;
+  }
+
+  int forget_client(ClientStore &store, const Arguments &args) {
+    if (args.positional.empty()) {
+      std::fprintf(stderr, "usage: couchlink-host forget <id>\n");
+      return 2;
+    }
+    const auto id = static_cast<std::uint32_t>(std::strtoul(args.positional[0].c_str(), nullptr, 16));
+    if (!store.remove(id) || !store.save()) {
+      std::fprintf(stderr, "no paired client %s\n", args.positional[0].c_str());
+      return 1;
+    }
+    std::printf("Forgot %08x\n", id);
+    return 0;
+  }
+
+  int run_demo(ControllerBackend &backend, const Arguments &args) {
+    const int seconds = args.positional.empty() ? 60 : std::atoi(args.positional[0].c_str());
+    link::Attach attach;
+    std::atomic<std::uint64_t> outputs {0};
+    auto controller = backend.create(attach, 0, [&outputs](link::OutputKind kind, const std::vector<std::uint8_t> &report) {
+      ++outputs;
+      log::info("demo: Steam sent ", kind == link::OutputKind::kOutputReport ? "output report 0x" : "setting 0x", std::hex,
+                int(report.size() > 1 && kind == link::OutputKind::kSetFeature ? report[1] : report[0]));
+    });
+    if (!controller) {
+      log::error("demo: could not create the virtual controller");
+      return 1;
+    }
+
+    log::info("demo: driving a virtual Steam Controller for ", seconds, " s. Open Steam > Settings > Controller to watch it.");
+    TestPattern pattern;
+    const auto start = std::chrono::steady_clock::now();
+    auto next = start;
+    while (!g_quit && std::chrono::steady_clock::now() - start < std::chrono::seconds(seconds)) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count();
+      const auto frame = pattern.frame(static_cast<std::uint64_t>(elapsed));
+      controller->submit(frame.data(), frame.size());
+      next += std::chrono::microseconds(kStateReportIntervalUs);
+      std::this_thread::sleep_until(next);
+    }
+    controller->release_all();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    log::info("demo: done (", outputs.load(), " messages from Steam)");
+    return 0;
+  }
+
+}  // namespace
+
+int main(int argc, char **argv) {
+  Arguments args;
+  if (!parse_arguments(argc, argv, args)) {
+    print_usage();
+    return 2;
+  }
+  log::set_level(args.verbose ? log::Level::kDebug : log::Level::kInfo);
+  if (!args.log_file.empty() && !log::set_file(args.log_file)) {
+    log::warn("cannot write the log to ", args.log_file);
+  }
+  if (args.hide_console) {
+    desktop::hide_console();
+  }
+  if (args.command == "install") {
+    desktop::InstallOptions install;
+    install.run_arguments = run_arguments(args);
+    install.port = args.port;
+    return desktop::install(install);
+  }
+  if (args.command == "uninstall") {
+    return desktop::uninstall();
+  }
+  if (!net::startup()) {
+    log::error("network startup failed");
+    return 1;
+  }
+
+  ClientStore store(args.config.empty() ? ClientStore::default_path() : args.config);
+  store.load();
+
+  if (args.command == "clients") {
+    return list_clients(store);
+  }
+  if (args.command == "forget") {
+    return forget_client(store, args);
+  }
+  if (args.command != "run" && args.command != "pair" && args.command != "demo") {
+    std::fprintf(stderr, "unknown command '%s'\n\n", args.command.c_str());
+    print_usage();
+    return 2;
+  }
+
+  std::signal(SIGINT, on_signal);
+  std::signal(SIGTERM, on_signal);
+
+  usbip::Server usbip_server;
+  if (!usbip_server.start("127.0.0.1", args.usbip_port)) {
+    log::error("is another USB/IP server using port ", args.usbip_port, "? Try --usbip-port");
+    return 1;
+  }
+
+  UsbipBackendOptions backend_options;
+  backend_options.attach.enabled = args.attach;
+  backend_options.attach.executable = args.usbip_exe;
+  backend_options.attach.port = usbip_server.port();
+  backend_options.blocked_settings = args.blocked_settings;
+  UsbipBackend backend(usbip_server, backend_options);
+
+  if (args.command == "demo") {
+    const int code = run_demo(backend, args);
+    usbip_server.stop();
+    return code;
+  }
+
+  LinkServer::Options options;
+  options.bind_address = args.bind;
+  options.port = args.port;
+  options.host_name = args.name.empty() ? computer_name() : args.name;
+  options.remote_pairing = args.remote_pairing;
+  options.show_code = show_code;
+  options.stats_interval = std::chrono::seconds(args.stats_seconds);
+  auto server = std::make_unique<LinkServer>(options, store, backend);
+  if (!server->start()) {
+    log::error("is couchlink-host already running (for example installed with 'couchlink-host install')? "
+               "Then there is nothing to start: pair by tapping Connect in Couchlink.");
+    return 1;
+  }
+
+  if (args.command == "pair") {
+    const std::string code = valid_pin(args.pin) ? args.pin : link::ClientSession::new_pin(random_bytes);
+    server->open_pairing(code, options.pairing_window, [](const LinkServer::PairingOutcome &outcome) {
+      if (outcome.success) {
+        std::printf("Paired with '%s'. It will connect automatically from now on.\n", outcome.client_name.c_str());
+      } else {
+        std::printf("Pairing did not complete. Run 'couchlink-host pair' to try again.\n");
+      }
+      std::fflush(stdout);
+    });
+    std::printf("Open Couchlink on your iPad or iPhone, enter this PC's address and tap Connect.\n");
+    show_code("your iPad or iPhone", code);
+  } else if (store.list().empty()) {
+    log::info("no paired devices yet: tap Connect in Couchlink on your iPad or iPhone, and a pairing code will pop up here");
+  }
+
+  discovery::Advertiser advertiser;
+  if (args.discovery) {
+    advertiser.start(options.host_name, server->port());
+  }
+
+  log::info("ready: ", store.list().size(), " paired client(s). Press Ctrl+C to stop.");
+  while (!g_quit) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  }
+
+  log::info("shutting down");
+  advertiser.stop();
+  server->stop();
+  usbip_server.stop();
+  return 0;
+}

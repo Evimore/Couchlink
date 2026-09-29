@@ -1,0 +1,1204 @@
+//
+//  CLKBridge.mm
+//  Couchlink
+//
+
+#import "CLKBridge.h"
+#import "CLKDiscovery.h"
+#import "CLKTritonBLE.h"
+
+#import <Security/Security.h>
+#import <UIKit/UIKit.h>
+
+#include "couchlink/link_client.h"
+#include "couchlink/timing_stats.h"
+
+#include <arpa/inet.h>
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
+#include <mach/mach_time.h>
+#include <memory>
+#include <netdb.h>
+#include <string>
+#include <sys/socket.h>
+#include <unistd.h>
+
+using namespace couchlink;
+
+namespace {
+
+    const NSTimeInterval kTickInterval = 0.02;
+    const NSTimeInterval kProbeRetry = 0.5;
+    const NSTimeInterval kNotFoundAfter = 3.0;
+    const NSTimeInterval kPairRetry = 1.0;
+    const NSTimeInterval kHelloRetry = 0.5;
+    const int kMaxHelloAttempts = 6;
+    const NSTimeInterval kPingInterval = 1.0;
+    const NSTimeInterval kLinkLostAfter = 4.0;
+    const NSTimeInterval kAttachRetry = 0.3;
+    const NSTimeInterval kLizardInterval = 2.0;
+    const NSTimeInterval kLiveTimingWindow = 5.0;
+    // couchlink-host drops a session after 3 s of silence. An app in the
+    // background does not run while the controller is idle, so after a longer
+    // pause assume the session is gone and start a new one straight away.
+    const NSTimeInterval kResumeAfterSilence = 2.5;
+    const NSUInteger kMaxEvents = 200;
+    const int kMaxControllers = 4;
+
+    NSString *const kKeychainService = @"Couchlink";
+    NSString *const kKeychainAccount = @"pairings";
+    NSString *const kAddressDefaultsKey = @"CLKPCAddress";
+    // Every address a PC answered on (home network, VPN...), newest first, by
+    // host name; and the host last connected to. When the saved address stops
+    // answering, the others are tried in turn.
+    NSString *const kKnownAddressesDefaultsKey = @"CLKKnownAddresses";
+    NSString *const kLastHostDefaultsKey = @"CLKLastHost";
+    const NSUInteger kMaxKnownAddresses = 4;
+    const NSTimeInterval kTryNextAddressAfter = 9.0;
+    NSString *const kRestoreIdentifier = @"com.evimore.Couchlink.bluetooth";
+    NSString *const kControllersDefaultsKey = @"CLKControllers";
+
+    const std::uint8_t kSettingLizardMode = 9;
+
+    void SecureRandom(std::uint8_t *out, std::size_t length)
+    {
+        if (SecRandomCopyBytes(kSecRandomDefault, length, out) != errSecSuccess) {
+            arc4random_buf(out, length);
+        }
+    }
+
+    std::uint64_t RandomNonce()
+    {
+        std::uint64_t value = 0;
+        SecureRandom(reinterpret_cast<std::uint8_t *>(&value), sizeof(value));
+        return value;
+    }
+
+    std::uint64_t WallClockMicroseconds()
+    {
+        return (std::uint64_t)([NSDate date].timeIntervalSince1970 * 1e6);
+    }
+
+    /// Monotonic microseconds, for timing measurements.
+    std::uint64_t MonotonicMicroseconds()
+    {
+        static mach_timebase_info_data_t timebase;
+        if (timebase.denom == 0) {
+            mach_timebase_info(&timebase);
+        }
+        return mach_absolute_time() * timebase.numer / timebase.denom / 1000;
+    }
+
+    std::string ToStdString(NSString *text)
+    {
+        return text ? std::string(text.UTF8String) : std::string();
+    }
+
+    NSString *ToNSString(const std::string &text)
+    {
+        return [NSString stringWithUTF8String:text.c_str()] ?: @"";
+    }
+
+    NSData *SettingReport(std::uint8_t setting, std::uint16_t value)
+    {
+        const std::uint8_t bytes[] = {0x01, 0x87, 0x03, setting, (std::uint8_t)(value & 0xFF), (std::uint8_t)(value >> 8)};
+        return [NSData dataWithBytes:bytes length:sizeof(bytes)];
+    }
+
+    /// Tailscale hands out 100.64.0.0/10 and fd7a:115c:a1e0::/48.
+    bool IsTailscaleAddress(const struct sockaddr *address)
+    {
+        if (address->sa_family == AF_INET) {
+            const std::uint32_t ip = ntohl(reinterpret_cast<const struct sockaddr_in *>(address)->sin_addr.s_addr);
+            return (ip & 0xFFC00000u) == 0x64400000u;
+        }
+        if (address->sa_family == AF_INET6) {
+            static const std::uint8_t prefix[] = {0xfd, 0x7a, 0x11, 0x5c, 0xa1, 0xe0};
+            return std::memcmp(reinterpret_cast<const struct sockaddr_in6 *>(address)->sin6_addr.s6_addr, prefix, sizeof(prefix)) == 0;
+        }
+        return false;
+    }
+
+    /// "host", "host:port", "[v6]", "[v6]:port" or a bare IPv6 address.
+    void SplitAddress(NSString *address, NSString **host, NSString **port)
+    {
+        NSString *trimmed = [address stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        *port = [NSString stringWithFormat:@"%u", link::kDefaultPort];
+        if ([trimmed hasPrefix:@"["]) {
+            const NSRange close = [trimmed rangeOfString:@"]"];
+            if (close.location != NSNotFound) {
+                *host = [trimmed substringWithRange:NSMakeRange(1, close.location - 1)];
+                NSString *rest = [trimmed substringFromIndex:close.location + 1];
+                if ([rest hasPrefix:@":"] && rest.length > 1) {
+                    *port = [rest substringFromIndex:1];
+                }
+                return;
+            }
+        }
+        NSArray<NSString *> *parts = [trimmed componentsSeparatedByString:@":"];
+        if (parts.count == 2) {
+            *host = parts[0];
+            *port = parts[1];
+        } else {
+            *host = trimmed;
+        }
+    }
+
+}  // namespace
+
+@implementation CLKStatus
+@end
+
+#pragma mark - Per-controller state
+
+@interface CLKController : NSObject
+@property (nonatomic, strong) CLKTritonDevice *device;
+@property (nonatomic, assign) std::uint8_t linkIndex;
+@property (nonatomic, copy, nullable) NSString *serial;
+@property (nonatomic, copy, nullable) NSData *attributes;
+@property (nonatomic, assign) BOOL identified;
+@property (nonatomic, assign) BOOL attached;
+@property (nonatomic, assign) CFAbsoluteTime lastAttachSent;
+@property (nonatomic, assign) CFAbsoluteTime lastLizardSent;
+// Each input datagram also carries the previous report, so the PC can make
+// up for a lost datagram.
+@property (nonatomic, assign) std::uint32_t sequence;
+@property (nonatomic, copy, nullable) NSData *previousReport;
+@end
+
+@implementation CLKController
+@end
+
+#pragma mark - CLKBridge
+
+@interface CLKBridge () <CLKTritonBLEDelegate, CLKDiscoveryDelegate>
+@end
+
+@implementation CLKBridge {
+    dispatch_queue_t _queue;
+    dispatch_source_t _timer;
+    dispatch_source_t _readSource;
+    int _socket;
+    CLKTritonBLE *_ble;
+    CLKDiscovery *_discovery;               // main thread
+    NSArray<CLKDiscoveredPC *> *_discovered;  // link queue
+
+    NSString *_address;       // the one being tried
+    NSString *_savedAddress;  // the user's choice, or where the PC last answered
+    NSUInteger _candidateIndex;
+    CFAbsoluteTime _nextAddressTry;
+    NSString *_hostName;
+    NSString *_clientName;  // read once on the main thread
+    CLKLinkState _state;
+    CFAbsoluteTime _stateEnteredAt;
+    CFAbsoluteTime _lastSend;
+    CFAbsoluteTime _lastService;
+    std::uint64_t _probeNonce;
+    int _helloAttempts;
+    BOOL _everConnected;
+    CFAbsoluteTime _lastPing;
+    CFAbsoluteTime _lastPong;
+    double _rttMs;
+
+    std::unique_ptr<link::ClientSession> _session;
+    link::Pairing _pendingPairing;
+    std::uint64_t _pairStartNonce;
+    BOOL _codeRequested;
+    std::vector<std::uint8_t> _pendingPairRequest;
+
+    NSMutableDictionary<NSUUID *, CLKController *> *_controllers;
+
+    // Bluetooth report timing on this device, per app state.
+    BOOL _inBackground;
+    TimingStats _timingForeground;
+    TimingStats _timingBackground;
+    TimingStats _timingLive;
+    TimingStats _timingSent;  // when reports actually leave for the PC
+    BOOL _viaTailscale;
+    NSString *_lastEvent;
+    NSUInteger _eventRepeats;
+    CFAbsoluteTime _liveStarted;
+    NSString *_liveSummary;
+
+    CFAbsoluteTime _lastDatagramSent;
+    NSMutableArray<NSString *> *_events;
+    NSDateFormatter *_eventTime;
+}
+
++ (instancetype)shared
+{
+    static CLKBridge *bridge;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        bridge = [[CLKBridge alloc] initPrivate];
+    });
+    return bridge;
+}
+
+- (instancetype)initPrivate
+{
+    if ((self = [super init])) {
+        _socket = -1;
+        _rttMs = -1;
+        _controllers = [NSMutableDictionary dictionary];
+        _liveSummary = @"";
+        _events = [NSMutableArray array];
+        _eventTime = [[NSDateFormatter alloc] init];
+        _eventTime.dateFormat = @"HH:mm:ss.SSS";
+        NSString *deviceName = [UIDevice currentDevice].name;  // shared is first used on the main thread
+        _clientName = deviceName.length > 0 ? deviceName : @"Couchlink";
+        _queue = dispatch_queue_create("com.evimore.couchlink.link", DISPATCH_QUEUE_SERIAL);
+        dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
+        _address = [[NSUserDefaults standardUserDefaults] stringForKey:kAddressDefaultsKey];
+        _savedAddress = _address;
+        _state = _address.length > 0 ? CLKLinkStateSearching : CLKLinkStateNoPC;
+        _inBackground = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
+
+        NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
+        [center addObserver:self selector:@selector(didEnterBackground) name:UIApplicationDidEnterBackgroundNotification object:nil];
+        [center addObserver:self selector:@selector(willEnterForeground) name:UIApplicationWillEnterForegroundNotification object:nil];
+    }
+    return self;
+}
+
+- (void)start
+{
+    const BOOL launchedInBackground = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
+    dispatch_async(_queue, ^{
+        if (self->_timer != nil) {
+            return;
+        }
+        [self logEvent:launchedInBackground ? @"Couchlink started in the background (iOS launched it for a controller)"
+                                            : @"Couchlink started"];
+        if (self->_address.length > 0) {
+            [self openSocket];
+            [self enterState:CLKLinkStateSearching];
+        }
+        self->_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self->_queue);
+        dispatch_source_set_timer(self->_timer, DISPATCH_TIME_NOW, (uint64_t)(kTickInterval * NSEC_PER_SEC), NSEC_PER_MSEC);
+        __weak CLKBridge *weakSelf = self;
+        dispatch_source_set_event_handler(self->_timer, ^{
+            [weakSelf service];
+        });
+        dispatch_resume(self->_timer);
+    });
+    _ble = [[CLKTritonBLE alloc] initWithDelegate:self restoreIdentifier:kRestoreIdentifier];
+    NSMutableArray<NSUUID *> *remembered = [NSMutableArray array];
+    for (NSString *text in [[NSUserDefaults standardUserDefaults] stringArrayForKey:kControllersDefaultsKey]) {
+        NSUUID *identifier = [[NSUUID alloc] initWithUUIDString:text];
+        if (identifier != nil) {
+            [remembered addObject:identifier];
+        }
+    }
+    _ble.rememberedIdentifiers = remembered;
+    [_ble start];
+
+    _discovery = [[CLKDiscovery alloc] initWithDelegate:self];
+    if ([UIApplication sharedApplication].applicationState != UIApplicationStateBackground) {
+        [_discovery start];
+    }
+}
+
+- (void)connectToPC:(NSString *)address
+{
+    NSString *trimmed = [address stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    [[NSUserDefaults standardUserDefaults] setObject:trimmed forKey:kAddressDefaultsKey];
+    dispatch_async(_queue, ^{
+        if (self->_state == CLKLinkStateConnected && self->_session) {
+            [self detachAll];
+            [self sendDatagram:self->_session->make_bye()];
+        }
+        self->_address = trimmed;
+        self->_savedAddress = trimmed;
+        self->_candidateIndex = 0;
+        self->_hostName = nil;
+        self->_session.reset();
+        self->_everConnected = NO;
+        [self closeSocket];
+        if (trimmed.length == 0) {
+            [self enterState:CLKLinkStateNoPC];
+            return;
+        }
+        [self openSocket];
+        [self enterState:CLKLinkStateSearching];
+    });
+}
+
+- (void)scanForNewControllers
+{
+    [_ble scanForNewControllers:30];
+}
+
+- (void)resetTiming
+{
+    dispatch_async(_queue, ^{
+        self->_timingForeground.reset();
+        self->_timingBackground.reset();
+        self->_timingLive.reset();
+        self->_timingSent.reset();
+        self->_liveSummary = @"";
+    });
+}
+
+#pragma mark - Discovery
+
+- (void)discoveryDidChange:(CLKDiscovery *)discovery
+{
+    NSArray<CLKDiscoveredPC *> *pcs = discovery.pcs;
+    dispatch_async(_queue, ^{
+        self->_discovered = pcs;
+        [self useDiscoveredPairedPC];
+    });
+}
+
+- (void)discovery:(CLKDiscovery *)discovery didFailWithCode:(NSInteger)code
+{
+    dispatch_async(_queue, ^{
+        [self logEvent:[NSString stringWithFormat:@"Cannot look for PCs on this network (error %ld). Is Local Network on for Couchlink in Settings?", (long)code]];
+    });
+}
+
+/// If the saved address doesn't answer (or there is none) and a PC this
+/// device is paired with shows up on the network, switch to it. This covers
+/// a PC whose local address changed. Link queue.
+- (void)useDiscoveredPairedPC
+{
+    if (_state != CLKLinkStateNoPC && _state != CLKLinkStateNotFound) {
+        return;
+    }
+    for (CLKDiscoveredPC *pc in _discovered) {
+        link::Pairing pairing;
+        if ([pc.address isEqualToString:_address] || ![CLKBridge pairingForHostName:pc.name into:pairing]) {
+            continue;
+        }
+        [self logEvent:[NSString stringWithFormat:@"Found %@ on this network at %@", pc.name, pc.address]];
+        [self connectToPC:pc.address];
+        return;
+    }
+}
+
+#pragma mark - Known addresses
+
+/// The saved address first, then the others the last PC answered on. Link queue.
+- (NSArray<NSString *> *)candidateAddresses
+{
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    if (_savedAddress.length > 0) {
+        [candidates addObject:_savedAddress];
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSString *host = [defaults stringForKey:kLastHostDefaultsKey];
+    id known = host.length > 0 ? [defaults dictionaryForKey:kKnownAddressesDefaultsKey][host] : nil;
+    if ([known isKindOfClass:[NSArray class]]) {
+        for (id address in (NSArray *)known) {
+            if ([address isKindOfClass:[NSString class]] && ![candidates containsObject:address]) {
+                [candidates addObject:address];
+            }
+        }
+    }
+    return candidates;
+}
+
+/// The current address doesn't answer: move on to the next known one. Link queue.
+- (void)tryNextKnownAddress
+{
+    NSArray<NSString *> *candidates = [self candidateAddresses];
+    if (candidates.count < 2) {
+        return;
+    }
+    _candidateIndex = (_candidateIndex + 1) % candidates.count;
+    NSString *next = candidates[_candidateIndex];
+    if ([next isEqualToString:_address]) {
+        return;
+    }
+    [self logEvent:[NSString stringWithFormat:@"Trying %@, where the PC answered before", next]];
+    _address = next;
+    _hostName = nil;
+    _session.reset();
+    [self closeSocket];
+    [self openSocket];
+    [self enterState:CLKLinkStateSearching];
+}
+
+/// Connected: keep this address for the PC and make it the saved one. Link queue.
+- (void)rememberWorkingAddress
+{
+    if (_hostName.length == 0 || _address.length == 0) {
+        return;
+    }
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableDictionary *known = [[defaults dictionaryForKey:kKnownAddressesDefaultsKey] mutableCopy] ?: [NSMutableDictionary dictionary];
+    NSMutableArray *addresses = [known[_hostName] isKindOfClass:[NSArray class]] ? [known[_hostName] mutableCopy] : [NSMutableArray array];
+    [addresses removeObject:_address];
+    [addresses insertObject:_address atIndex:0];
+    while (addresses.count > kMaxKnownAddresses) {
+        [addresses removeLastObject];
+    }
+    known[_hostName] = addresses;
+    [defaults setObject:known forKey:kKnownAddressesDefaultsKey];
+    [defaults setObject:_hostName forKey:kLastHostDefaultsKey];
+    [defaults setObject:_address forKey:kAddressDefaultsKey];
+    _savedAddress = _address;
+    _candidateIndex = 0;
+}
+
+#pragma mark - App state
+
+- (void)didEnterBackground
+{
+    [_discovery stop];  // Bonjour browsing needs the foreground anyway
+    dispatch_async(_queue, ^{
+        self->_inBackground = YES;
+        self->_timingBackground.break_sequence();  // the switch itself is not a Bluetooth gap
+        [self logEvent:@"App moved to the background"];
+    });
+}
+
+- (void)willEnterForeground
+{
+    [_discovery start];
+    dispatch_async(_queue, ^{
+        self->_inBackground = NO;
+        self->_timingForeground.break_sequence();
+        [self logEvent:@"App back in the foreground"];
+    });
+}
+
+#pragma mark - Status
+
+- (CLKStatus *)status
+{
+    __block CLKStatus *status = nil;
+    dispatch_sync(_queue, ^{
+        status = [[CLKStatus alloc] init];
+        status.linkState = self->_state;
+        status.pcAddress = self->_address ?: @"";
+        status.pcName = self->_hostName ?: @"";
+        status.rttMs = self->_state == CLKLinkStateConnected ? self->_rttMs : -1;
+        status.linkText = [self linkText];
+        NSMutableArray<NSString *> *controllers = [NSMutableArray array];
+        for (CLKController *controller in self->_controllers.allValues) {
+            NSString *state = self->_state != CLKLinkStateConnected ? @"connected to this device"
+                            : controller.attached ? @"full Steam Input on the PC"
+                            : @"plugging in on the PC...";
+            [controllers addObject:[NSString stringWithFormat:@"%@: %@", controller.device.name, state]];
+        }
+        status.controllers = controllers;
+        status.timingNow = self->_liveSummary;
+        status.timingForeground = ToNSString(self->_timingForeground.summary().reports > 1 ? self->_timingForeground.summary().to_string() : "");
+        status.timingBackground = ToNSString(self->_timingBackground.summary().reports > 1 ? self->_timingBackground.summary().to_string() : "");
+        status.timingSent = ToNSString(self->_timingSent.summary().reports > 1 ? self->_timingSent.summary().to_string() : "");
+        status.events = [self->_events copy];
+        status.discoveredPCs = self->_discovered ?: @[];
+    });
+    return status;
+}
+
+- (NSString *)linkText
+{
+    switch (_state) {
+        case CLKLinkStateNoPC:
+            return @"Enter your gaming PC's address.";
+        case CLKLinkStateSearching:
+            return [NSString stringWithFormat:@"Looking for couchlink-host on %@...", _address];
+        case CLKLinkStateNotFound:
+            return [NSString stringWithFormat:@"No answer from %@. Is couchlink-host running there, and is UDP %u allowed through its firewall? Still trying.", _address, link::kDefaultPort];
+        case CLKLinkStatePairing:
+            return [NSString stringWithFormat:@"Pairing with %@: enter the code shown on its screen.", _hostName ?: _address];
+        case CLKLinkStateConnecting:
+            return [NSString stringWithFormat:@"Connecting to %@...", _hostName ?: _address];
+        case CLKLinkStateConnected: {
+            NSString *path = _viaTailscale ? @" through Tailscale" : @"";
+            return _rttMs >= 0 ? [NSString stringWithFormat:@"Connected to %@%@ (round trip %.1f ms)", _hostName, path, _rttMs]
+                               : [NSString stringWithFormat:@"Connected to %@%@", _hostName, path];
+        }
+    }
+    return @"";
+}
+
+- (void)tellUser:(NSString *)message
+{
+    [self logEvent:message];  // always called on the link queue
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.delegate bridge:self showMessage:message];
+    });
+}
+
+/// Record an event (link queue).
+- (void)logEvent:(NSString *)event
+{
+    NSString *stamped = [NSString stringWithFormat:@"%@  %@", [_eventTime stringFromDate:[NSDate date]], event];
+    if ([event isEqualToString:_lastEvent] && _events.count > 0) {
+        // Steam repeats some settings every few seconds: fold repeats into one line.
+        ++_eventRepeats;
+        _events[_events.count - 1] = [NSString stringWithFormat:@"%@ (x%lu)", stamped, (unsigned long)(_eventRepeats + 1)];
+        return;
+    }
+    NSLog(@"Couchlink: %@", event);
+    _lastEvent = event;
+    _eventRepeats = 0;
+    [_events addObject:stamped];
+    if (_events.count > kMaxEvents) {
+        [_events removeObjectAtIndex:0];
+    }
+}
+
+- (NSString *)report
+{
+    CLKStatus *status = [self status];
+    NSMutableString *text = [NSMutableString string];
+    [text appendFormat:@"Couchlink %@ on %@ (iOS %@)\n", [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"],
+                       [UIDevice currentDevice].model, [UIDevice currentDevice].systemVersion];
+    [text appendFormat:@"Link: %@\n", status.linkText];
+    [text appendFormat:@"Controllers: %@\n", status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"; "] : @"none"];
+    [text appendFormat:@"Bluetooth timing, foreground: %@\n", status.timingForeground];
+    [text appendFormat:@"Bluetooth timing, background: %@\n", status.timingBackground];
+    [text appendFormat:@"Sent to the PC: %@\n", status.timingSent];
+    [text appendString:@"\nEvents:\n"];
+    [text appendString:[status.events componentsJoinedByString:@"\n"]];
+    return text;
+}
+
+#pragma mark - Keychain
+
++ (NSMutableDictionary<NSString *, NSString *> *)loadPairings
+{
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: kKeychainAccount,
+        (__bridge id)kSecReturnData: @YES,
+        (__bridge id)kSecMatchLimit: (__bridge id)kSecMatchLimitOne,
+    };
+    CFTypeRef result = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)query, &result) != errSecSuccess || result == NULL) {
+        return [NSMutableDictionary dictionary];
+    }
+    NSData *data = (__bridge_transfer NSData *)result;
+    id plist = [NSPropertyListSerialization propertyListWithData:data options:NSPropertyListMutableContainers format:NULL error:NULL];
+    return [plist isKindOfClass:[NSMutableDictionary class]] ? plist : [NSMutableDictionary dictionary];
+}
+
++ (void)storePairings:(NSDictionary<NSString *, NSString *> *)pairings
+{
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:pairings format:NSPropertyListBinaryFormat_v1_0 options:0 error:NULL];
+    if (data == nil) {
+        return;
+    }
+    NSDictionary *query = @{
+        (__bridge id)kSecClass: (__bridge id)kSecClassGenericPassword,
+        (__bridge id)kSecAttrService: kKeychainService,
+        (__bridge id)kSecAttrAccount: kKeychainAccount,
+    };
+    NSDictionary *update = @{(__bridge id)kSecValueData: data};
+    if (SecItemUpdate((__bridge CFDictionaryRef)query, (__bridge CFDictionaryRef)update) == errSecItemNotFound) {
+        NSMutableDictionary *add = [query mutableCopy];
+        add[(__bridge id)kSecValueData] = data;
+        // Readable in the background once the device was unlocked after boot.
+        add[(__bridge id)kSecAttrAccessible] = (__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly;
+        SecItemAdd((__bridge CFDictionaryRef)add, NULL);
+    }
+}
+
++ (BOOL)pairingForHostName:(NSString *)hostName into:(link::Pairing &)pairing
+{
+    NSArray<NSString *> *parts = [[self loadPairings][hostName] componentsSeparatedByString:@":"];
+    if (parts.count != 2) {
+        return NO;
+    }
+    const auto key = link::key_from_hex(ToStdString(parts[1]));
+    const auto clientId = (std::uint32_t)strtoul(parts[0].UTF8String, NULL, 16);
+    if (!key || clientId == 0) {
+        return NO;
+    }
+    pairing.client_id = clientId;
+    pairing.key = *key;
+    return YES;
+}
+
++ (void)savePairing:(const link::Pairing &)pairing forHostName:(NSString *)hostName
+{
+    NSMutableDictionary *pairings = [self loadPairings];
+    const std::string keyHex = link::to_hex(pairing.key.data(), pairing.key.size());
+    pairings[hostName] = [NSString stringWithFormat:@"%08x:%s", pairing.client_id, keyHex.c_str()];
+    [self storePairings:pairings];
+}
+
+#pragma mark - Socket (link queue)
+
+- (void)openSocket
+{
+    [self closeSocket];
+    NSString *host = nil;
+    NSString *port = nil;
+    SplitAddress(_address, &host, &port);
+
+    struct addrinfo hints = {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    struct addrinfo *info = NULL;
+    if (host.length == 0 || getaddrinfo(host.UTF8String, port.UTF8String, &hints, &info) != 0 || info == NULL) {
+        [self logEvent:[NSString stringWithFormat:@"Cannot resolve %@", _address]];
+        return;
+    }
+    for (struct addrinfo *entry = info; entry != NULL; entry = entry->ai_next) {
+        const int s = socket(entry->ai_family, entry->ai_socktype, entry->ai_protocol);
+        if (s < 0) {
+            continue;
+        }
+        if (connect(s, entry->ai_addr, entry->ai_addrlen) == 0) {
+            _socket = s;
+            _viaTailscale = IsTailscaleAddress(entry->ai_addr);
+            break;
+        }
+        close(s);
+    }
+    freeaddrinfo(info);
+    if (_socket < 0) {
+        return;
+    }
+
+    // Low latency beats throughput for these tiny datagrams.
+    const int serviceClass = NET_SERVICE_TYPE_VO;
+    setsockopt(_socket, SOL_SOCKET, SO_NET_SERVICE_TYPE, &serviceClass, sizeof(serviceClass));
+
+    fcntl(_socket, F_SETFL, fcntl(_socket, F_GETFL) | O_NONBLOCK);
+    const int fd = _socket;
+    _readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, _queue);
+    __weak CLKBridge *weakSelf = self;
+    dispatch_source_set_event_handler(_readSource, ^{
+        std::uint8_t buffer[link::kMaxDatagram + 1];
+        for (;;) {
+            const ssize_t received = recv(fd, buffer, sizeof(buffer), 0);
+            if (received <= 0) {
+                break;
+            }
+            [weakSelf handleDatagram:buffer length:(size_t)received];
+        }
+    });
+    dispatch_source_set_cancel_handler(_readSource, ^{
+        close(fd);
+    });
+    dispatch_resume(_readSource);
+}
+
+- (void)closeSocket
+{
+    if (_readSource != nil) {
+        dispatch_source_cancel(_readSource);  // the cancel handler closes the socket
+        _readSource = nil;
+    } else if (_socket >= 0) {
+        close(_socket);
+    }
+    _socket = -1;
+}
+
+- (void)sendDatagram:(const std::vector<std::uint8_t> &)datagram
+{
+    if (datagram.empty()) {
+        return;
+    }
+    if (_socket < 0) {
+        [self openSocket];
+        if (_socket < 0) {
+            return;
+        }
+    }
+    _lastDatagramSent = CFAbsoluteTimeGetCurrent();
+    if (send(_socket, datagram.data(), datagram.size(), 0) < 0 && errno != EAGAIN && errno != ENOBUFS) {
+        // iOS can invalidate sockets of apps that were suspended; start over.
+        [self logEvent:[NSString stringWithFormat:@"Network send failed (%s); reopening the socket", strerror(errno)]];
+        [self openSocket];
+    }
+}
+
+#pragma mark - State machine (link queue)
+
+- (void)enterState:(CLKLinkState)state
+{
+    if (state != _state) {
+        static NSString *const names[] = {@"no PC", @"searching", @"not found", @"pairing", @"connecting", @"connected"};
+        [self logEvent:[NSString stringWithFormat:@"Link: %@", names[state]]];
+    }
+    _state = state;
+    _stateEnteredAt = CFAbsoluteTimeGetCurrent();
+    _lastSend = 0;
+    switch (state) {
+        case CLKLinkStateSearching:
+            _probeNonce = RandomNonce();
+            _nextAddressTry = _stateEnteredAt + kTryNextAddressAfter;
+            break;
+        case CLKLinkStateConnecting:
+            _helloAttempts = 0;
+            break;
+        case CLKLinkStateConnected:
+            _everConnected = YES;
+            _lastPong = CFAbsoluteTimeGetCurrent();
+            for (CLKController *controller in _controllers.allValues) {
+                controller.attached = NO;
+                controller.lastAttachSent = 0;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+/// Periodic work. Runs from the timer and from every Bluetooth report,
+/// because timers are unreliable while the app is in the background.
+- (void)service
+{
+    const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    if (now - _lastService < kTickInterval * 0.5) {
+        return;
+    }
+    _lastService = now;
+    const CFAbsoluteTime inState = now - _stateEnteredAt;
+
+    switch (_state) {
+        case CLKLinkStateNoPC:
+            break;
+
+        case CLKLinkStateSearching:
+        case CLKLinkStateNotFound:
+            if (_state == CLKLinkStateSearching && inState > kNotFoundAfter) {
+                _state = CLKLinkStateNotFound;  // keep the nonce; keep probing
+                [self logEvent:[NSString stringWithFormat:@"Link: no answer from %@ yet", _address]];
+                [self useDiscoveredPairedPC];
+            }
+            if (_state == CLKLinkStateNotFound && now >= _nextAddressTry) {
+                _nextAddressTry = now + kTryNextAddressAfter;
+                [self tryNextKnownAddress];
+            }
+            if (now - _lastSend >= (_state == CLKLinkStateNotFound ? 2.0 : kProbeRetry)) {
+                _lastSend = now;
+                [self sendDatagram:link::ClientSession::make_probe(_probeNonce)];
+            }
+            break;
+
+        case CLKLinkStatePairing:
+            if (now - _lastSend >= kPairRetry) {
+                _lastSend = now;
+                if (_pendingPairRequest.empty()) {
+                    [self sendDatagram:link::ClientSession::make_pair_start(_pairStartNonce, ToStdString([self clientName]))];
+                } else {
+                    [self sendDatagram:_pendingPairRequest];
+                }
+            }
+            break;
+
+        case CLKLinkStateConnecting:
+            if (now - _lastSend >= kHelloRetry) {
+                if (_helloAttempts >= kMaxHelloAttempts) {
+                    if (!_everConnected) {
+                        // The PC answers probes but ignores our pairing: it no
+                        // longer knows this device. Pair again.
+                        [self beginPairing];
+                    } else {
+                        [self enterState:CLKLinkStateSearching];
+                    }
+                    break;
+                }
+                ++_helloAttempts;
+                _lastSend = now;
+                [self sendDatagram:_session->make_hello(WallClockMicroseconds())];
+            }
+            break;
+
+        case CLKLinkStateConnected:
+            if (now - _lastPong > kLinkLostAfter) {
+                [self logEvent:@"Link: no answer from the PC for 4 s, reconnecting"];
+                [self enterState:CLKLinkStateConnecting];
+                break;
+            }
+            if (now - _lastPing >= kPingInterval) {
+                _lastPing = now;
+                [self sendDatagram:_session->make_ping(WallClockMicroseconds())];
+            }
+            for (CLKController *controller in _controllers.allValues) {
+                if (!controller.attached && controller.identified && now - controller.lastAttachSent >= kAttachRetry) {
+                    [self sendAttach:controller];
+                }
+            }
+            break;
+    }
+
+    // Keep the controller out of keyboard/mouse emulation.
+    for (CLKController *controller in _controllers.allValues) {
+        if (now - controller.lastLizardSent >= kLizardInterval) {
+            controller.lastLizardSent = now;
+            [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 0)];
+        }
+    }
+
+    if (now - _liveStarted >= kLiveTimingWindow) {
+        _liveStarted = now;
+        const auto live = _timingLive.summary();
+        _liveSummary = live.reports > 1 ? ToNSString(live.to_string()) : @"";
+        _timingLive.reset();
+    }
+}
+
+- (void)handleDatagram:(const std::uint8_t *)data length:(size_t)length
+{
+    switch (_state) {
+        case CLKLinkStateSearching:
+        case CLKLinkStateNotFound: {
+            const auto reply = link::ClientSession::parse_probe_reply(data, length, _probeNonce);
+            if (!reply) {
+                return;
+            }
+            _hostName = ToNSString(reply->host_name);
+            if (_hostName.length == 0) {
+                _hostName = _address;
+            }
+            link::Pairing pairing;
+            if ([CLKBridge pairingForHostName:_hostName into:pairing]) {
+                [self startSessionWithPairing:pairing];
+            } else {
+                [self beginPairing];
+            }
+            return;
+        }
+
+        case CLKLinkStatePairing: {
+            if (_pendingPairRequest.empty()) {
+                const auto reply = link::ClientSession::parse_probe_reply(data, length, _pairStartNonce);
+                if (reply && !_codeRequested) {
+                    _codeRequested = YES;
+                    NSString *message = reply->pairing_open
+                        ? [NSString stringWithFormat:@"%@ is showing a 6-digit code on its screen. Not at the PC? Open your streaming app to see its screen, then come back here and enter the code.", _hostName]
+                        : [NSString stringWithFormat:@"%@ is not accepting new devices. Run 'couchlink-host pair' on it, then enter the code it shows.", _hostName];
+                    [self askForCode:message];
+                }
+                return;
+            }
+            const auto result = link::ClientSession::parse_pair_result(data, length, _pendingPairing);
+            if (!result) {
+                return;
+            }
+            if (*result) {
+                [CLKBridge savePairing:_pendingPairing forHostName:_hostName];
+                [self tellUser:[NSString stringWithFormat:@"Paired with %@.", _hostName]];
+                [self startSessionWithPairing:_pendingPairing];
+            } else {
+                _pendingPairing = link::ClientSession::new_pairing(SecureRandom);
+                _pendingPairRequest.clear();
+                [self askForCode:@"That code did not match. Enter the code shown on the PC's screen."];
+            }
+            return;
+        }
+
+        case CLKLinkStateConnecting:
+        case CLKLinkStateConnected: {
+            if (!_session) {
+                return;
+            }
+            const auto event = _session->handle(data, length);
+            if (event) {
+                [self handleSessionEvent:*event];
+            }
+            return;
+        }
+
+        case CLKLinkStateNoPC:
+            return;
+    }
+}
+
+- (void)startSessionWithPairing:(const link::Pairing &)pairing
+{
+    _session = std::make_unique<link::ClientSession>(pairing, ToStdString([self clientName]), SecureRandom);
+    [self enterState:CLKLinkStateConnecting];
+}
+
+- (void)handleSessionEvent:(const link::ClientSession::Event &)event
+{
+    using EventType = link::ClientSession::EventType;
+    switch (event.type) {
+        case EventType::kHelloAck:
+            if (_state != CLKLinkStateConnected) {
+                [self enterState:CLKLinkStateConnected];
+                [self rememberWorkingAddress];
+            }
+            break;
+
+        case EventType::kAttachAck:
+            for (CLKController *controller in _controllers.allValues) {
+                if (controller.linkIndex != event.attach_ack.controller) {
+                    continue;
+                }
+                const BOOL wasAttached = controller.attached;
+                controller.attached = event.attach_ack.status == link::AttachStatus::kOk;
+                if (!controller.attached && event.attach_ack.status == link::AttachStatus::kBackendUnavailable && !wasAttached) {
+                    [self tellUser:@"The PC could not create the virtual controller. Is usbip-win2 installed?"];
+                }
+            }
+            break;
+
+        case EventType::kNeedAttach:
+            for (CLKController *controller in _controllers.allValues) {
+                if (controller.linkIndex == event.need_attach.controller) {
+                    controller.attached = NO;
+                    controller.lastAttachSent = 0;
+                }
+            }
+            break;
+
+        case EventType::kPong:
+            _lastPong = CFAbsoluteTimeGetCurrent();
+            _rttMs = (double)(WallClockMicroseconds() - event.pong.client_time_us) / 1000.0;
+            break;
+
+        case EventType::kHidOutput:
+            for (CLKController *controller in _controllers.allValues) {
+                if (controller.linkIndex != event.output.controller) {
+                    continue;
+                }
+                NSData *report = [NSData dataWithBytes:event.output.report.data() length:event.output.report.size()];
+                if (event.output.kind == link::OutputKind::kOutputReport) {
+                    [controller.device sendOutputReport:report];
+                } else {
+                    [self logSettingsFromPC:event.output.report];
+                    [controller.device sendFeatureReport:report];
+                }
+            }
+            break;
+    }
+}
+
+/// Settings Steam sends reach the controller through us: note each one, so
+/// a disconnect right after one of them shows up in the event log.
+- (void)logSettingsFromPC:(const std::vector<std::uint8_t> &)report
+{
+    if (report.size() < 2) {
+        return;
+    }
+    if (report[1] == 0x87 && report.size() > 2) {
+        NSMutableArray<NSString *> *settings = [NSMutableArray array];
+        for (size_t i = 3; i + 3 <= report.size() && i < 3u + report[2]; i += 3) {
+            [settings addObject:[NSString stringWithFormat:@"%u=%u", report[i], report[i + 1] | (report[i + 2] << 8)]];
+        }
+        [self logEvent:[NSString stringWithFormat:@"PC set controller settings %@", [settings componentsJoinedByString:@", "]]];
+    } else {
+        [self logEvent:[NSString stringWithFormat:@"PC sent controller command 0x%02x", report[1]]];
+    }
+}
+
+- (void)sendAttach:(CLKController *)controller
+{
+    link::Attach attach;
+    attach.controller = controller.linkIndex;
+    attach.transport = link::Transport::kBluetoothLe;
+    const char *serial = controller.serial.UTF8String;
+    if (serial != NULL) {
+        strncpy(attach.unit_serial.data(), serial, attach.unit_serial.size() - 1);
+    }
+    if (controller.attributes.length >= 3) {
+        memcpy(attach.attributes_reply.data(), controller.attributes.bytes, MIN(controller.attributes.length, attach.attributes_reply.size()));
+    }
+    controller.lastAttachSent = CFAbsoluteTimeGetCurrent();
+    [self sendDatagram:_session->make_attach(attach)];
+}
+
+- (void)detachAll
+{
+    for (CLKController *controller in _controllers.allValues) {
+        [self sendDatagram:_session->make_detach(controller.linkIndex)];
+    }
+}
+
+#pragma mark - Pairing (the PC shows the code, the user types it here)
+
+- (NSString *)clientName
+{
+    return _clientName;
+}
+
+- (void)beginPairing
+{
+    _pendingPairing = link::ClientSession::new_pairing(SecureRandom);
+    _pairStartNonce = RandomNonce();
+    _pendingPairRequest.clear();
+    _codeRequested = NO;
+    _session.reset();
+    [self enterState:CLKLinkStatePairing];
+}
+
+- (void)askForCode:(NSString *)message
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self.delegate bridge:self needsPairingCodeWithMessage:message];
+    });
+}
+
+- (void)submitPairingCode:(NSString *)text
+{
+    dispatch_async(_queue, ^{
+        if (self->_state != CLKLinkStatePairing) {
+            return;
+        }
+        NSMutableString *digits = [NSMutableString string];
+        for (NSUInteger i = 0; i < text.length; ++i) {
+            const unichar c = [text characterAtIndex:i];
+            if (c >= '0' && c <= '9') {
+                [digits appendFormat:@"%C", c];
+            }
+        }
+        if (digits.length != link::kPinDigits) {
+            [self askForCode:[NSString stringWithFormat:@"The code has %d digits. Enter the code shown on the PC's screen.", (int)link::kPinDigits]];
+            return;
+        }
+        self->_pendingPairRequest = link::ClientSession::make_pair_request(self->_pendingPairing, ToStdString(digits),
+                                                                            ToStdString([self clientName]), RandomNonce());
+        self->_lastSend = 0;
+    });
+}
+
+- (void)cancelPairing
+{
+    dispatch_async(_queue, ^{
+        if (self->_state == CLKLinkStatePairing) {
+            // Try again later by tapping Connect.
+            [self closeSocket];
+            [self enterState:CLKLinkStateNoPC];  // Connect tries again
+        }
+    });
+}
+
+#pragma mark - Controllers (link queue)
+
+- (std::uint8_t)freeLinkIndex
+{
+    for (std::uint8_t index = 0; index < kMaxControllers; ++index) {
+        BOOL used = NO;
+        for (CLKController *controller in _controllers.allValues) {
+            used |= controller.linkIndex == index;
+        }
+        if (!used) {
+            return index;
+        }
+    }
+    return kMaxControllers;
+}
+
+- (void)rememberController:(NSUUID *)identifier
+{
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSMutableArray<NSString *> *known = [[defaults stringArrayForKey:kControllersDefaultsKey] mutableCopy] ?: [NSMutableArray array];
+    if (![known containsObject:identifier.UUIDString]) {
+        [known addObject:identifier.UUIDString];
+        while (known.count > 8) {
+            [known removeObjectAtIndex:0];
+        }
+        [defaults setObject:known forKey:kControllersDefaultsKey];
+    }
+}
+
+- (void)identify:(CLKController *)controller
+{
+    // GET_STRING_ATTRIBUTE (0xAE) index 1: the unit serial, which Steam keys
+    // settings by and the PC uses to recognise the controller after a drop.
+    const std::uint8_t serialRequest[] = {0x01, 0xAE, 0x01, 0x01};
+    __weak CLKController *weakController = controller;
+    [controller.device queryFeatureReport:[NSData dataWithBytes:serialRequest length:sizeof(serialRequest)] completion:^(NSData *reply) {
+        NSString *serial = nil;
+        const std::uint8_t *bytes = (const std::uint8_t *)reply.bytes;
+        if (reply.length > 4 && bytes[1] == 0xAE && bytes[3] == 0x01) {
+            serial = [[NSString alloc] initWithBytes:bytes + 4 length:strnlen((const char *)bytes + 4, reply.length - 4) encoding:NSASCIIStringEncoding];
+        }
+        // GET_ATTRIBUTES_VALUES (0x83): the firmware version Steam compares against.
+        const std::uint8_t attributesRequest[] = {0x01, 0x83, 0x00};
+        [weakController.device queryFeatureReport:[NSData dataWithBytes:attributesRequest length:sizeof(attributesRequest)] completion:^(NSData *attributes) {
+            const std::uint8_t *a = (const std::uint8_t *)attributes.bytes;
+            NSData *valid = (attributes.length > 3 && a[1] == 0x83) ? attributes : nil;
+            dispatch_async(self->_queue, ^{
+                CLKController *strong = weakController;
+                strong.serial = serial;
+                strong.attributes = valid;
+                strong.identified = YES;
+            });
+        }];
+    }];
+}
+
+#pragma mark - CLKTritonBLEDelegate (Bluetooth queue)
+
+- (void)tritonDidBecomeReady:(CLKTritonDevice *)device
+{
+    dispatch_async(_queue, ^{
+        if (self->_controllers[device.identifier] != nil) {
+            return;
+        }
+        const std::uint8_t index = [self freeLinkIndex];
+        if (index >= kMaxControllers) {
+            return;
+        }
+        CLKController *controller = [[CLKController alloc] init];
+        controller.device = device;
+        controller.linkIndex = index;
+        self->_controllers[device.identifier] = controller;
+        [self logEvent:[NSString stringWithFormat:@"Controller connected: %@ (reports 0x%02x)", device.name, device.inputReportId]];
+        [self rememberController:device.identifier];
+
+        [device sendFeatureReport:SettingReport(kSettingLizardMode, 0)];
+        controller.lastLizardSent = CFAbsoluteTimeGetCurrent();
+        [self identify:controller];
+    });
+}
+
+- (void)tritonDidDisconnect:(CLKTritonDevice *)device
+{
+    dispatch_async(_queue, ^{
+        CLKController *controller = self->_controllers[device.identifier];
+        if (controller == nil) {
+            return;
+        }
+        NSError *error = device.lastDisconnectError;
+        [self logEvent:[NSString stringWithFormat:@"Controller disconnected: %@", error != nil
+                            ? [NSString stringWithFormat:@"%@ (CoreBluetooth error %ld)", error.localizedDescription, (long)error.code]
+                            : @"no reason given"]];
+        if (self->_state == CLKLinkStateConnected && self->_session) {
+            // The PC keeps the virtual controller plugged in for a while, in
+            // case this was a Bluetooth hiccup.
+            [self sendDatagram:self->_session->make_detach(controller.linkIndex)];
+        }
+        [self->_controllers removeObjectForKey:device.identifier];
+    });
+}
+
+- (void)tritonBluetoothUnauthorized
+{
+    dispatch_async(_queue, ^{
+        [self tellUser:@"Couchlink needs Bluetooth. Allow it in Settings > Couchlink."];
+    });
+}
+
+- (void)triton:(CLKTritonDevice *)device didReceiveReport:(const uint8_t *)report length:(size_t)length
+{
+    const std::uint64_t arrived = MonotonicMicroseconds();
+    NSData *copy = [NSData dataWithBytes:report length:length];
+    dispatch_async(_queue, ^{
+        (self->_inBackground ? self->_timingBackground : self->_timingForeground).add(arrived);
+        self->_timingLive.add(arrived);
+
+        CLKController *controller = self->_controllers[device.identifier];
+        const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+        if (self->_state == CLKLinkStateConnected && now - self->_lastDatagramSent > kResumeAfterSilence) {
+            [self logEvent:[NSString stringWithFormat:@"Resuming after %.1f s of silence: starting a new session", now - self->_lastDatagramSent]];
+            [self enterState:CLKLinkStateConnecting];
+        }
+        if (controller != nil && self->_state == CLKLinkStateConnected && controller.attached) {
+            controller.sequence += 1;
+            NSData *previous = controller.previousReport;
+            [self sendDatagram:self->_session->make_input_bundle(controller.linkIndex, controller.sequence, (const std::uint8_t *)copy.bytes, copy.length,
+                                                                (const std::uint8_t *)previous.bytes, previous.length)];
+            controller.previousReport = copy;
+            self->_timingSent.add(MonotonicMicroseconds());
+        }
+        [self service];
+    });
+}
+
+@end

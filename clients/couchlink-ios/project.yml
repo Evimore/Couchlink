@@ -1,0 +1,58 @@
+# XcodeGen spec: `xcodegen generate` turns this into Couchlink.xcodeproj.
+name: Couchlink
+options:
+  bundleIdPrefix: com.evimore
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+    CLANG_ENABLE_OBJC_ARC: YES
+    GCC_WARN_UNUSED_VARIABLE: YES
+    ENABLE_BITCODE: NO
+targets:
+  Couchlink:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources/Assets.xcassets
+      - path: ../apple-shared
+      - path: ../../core/src
+      - path: ../../core/include
+        buildPhase: none
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.evimore.Couchlink
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        HEADER_SEARCH_PATHS:
+          - $(SRCROOT)/../../core/include
+          - $(SRCROOT)/../apple-shared
+        SUPPORTS_MACCATALYST: NO
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: Couchlink
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UIRequiresFullScreen: false
+        UIBackgroundModes:
+          - bluetooth-central
+        NSBluetoothAlwaysUsageDescription: Couchlink connects to your Steam Controller over Bluetooth and forwards it to your gaming PC.
+        NSLocalNetworkUsageDescription: Couchlink finds your gaming PC on the network and sends your controller's input to it.
+        NSBonjourServices:
+          - _couchlink._udp
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight

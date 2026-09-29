@@ -1,0 +1,123 @@
+name: Release
+
+# Two ways to release:
+# - On GitHub: Actions → Release → Run workflow, and enter a version such as
+#   0.2.0. The release (and its tag, v0.2.0) is made from the latest main.
+# - With git: push a tag such as v0.2.0.
+# A version with a suffix, such as 0.2.0-beta.1, becomes a pre-release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example 0.2.0 (the tag becomes v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+
+jobs:
+  check:
+    name: Check the version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      app-version: ${{ steps.version.outputs.app_version }}
+    steps:
+      - id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$version' is not a version like 1.2.3 or 1.2.3-beta.1"
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] && gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::$TAG already exists. Pick a new version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "app_version=${version%%-*}" >> "$GITHUB_OUTPUT"
+
+  windows:
+    name: Windows
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: |
+          cmake -S . -B build -A x64 -DCOUCHLINK_BUILD_TESTS=OFF "-DCOUCHLINK_VERSION=${{ needs.check.outputs.version }}"
+          cmake --build build --config Release -j
+      - name: Package
+        shell: pwsh
+        run: |
+          $dir = "couchlink-$env:TAG-windows-x64"
+          New-Item -ItemType Directory $dir | Out-Null
+          Copy-Item build/host/Release/couchlink-host.exe, build/host/Release/couchlink-sim.exe $dir
+          Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, docs/host-setup-windows.md $dir
+          Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: couchlink-${{ env.TAG }}-windows-x64.zip
+
+  couchlink-ios:
+    name: Couchlink (iOS)
+    needs: check
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build
+        working-directory: clients/couchlink-ios
+        run: >
+          xcodegen generate &&
+          set -o pipefail &&
+          xcodebuild -project Couchlink.xcodeproj -target Couchlink
+          -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/out"
+          MARKETING_VERSION=${{ needs.check.outputs.app-version }} CURRENT_PROJECT_VERSION=${{ github.run_number }}
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          build | tail -n 60
+      # Unsigned: a sideloading tool (Sideloadly, AltStore) signs it with your Apple ID.
+      - name: Package unsigned .ipa
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/out/Release-iphoneos/Couchlink.app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/Couchlink-$TAG-iOS.ipa" Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: couchlink-ios
+          path: Couchlink-${{ env.TAG }}-iOS.ipa
+
+  publish:
+    name: Publish
+    needs: [check, windows, couchlink-ios]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      # A release drafted on GitHub's Releases page gets the files added;
+      # otherwise the release, and its tag on this commit, are created here.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            prerelease=""
+            case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Couchlink $TAG" --generate-notes $prerelease
+          fi

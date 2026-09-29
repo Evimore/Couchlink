@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**/*.md"]
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # SDL release-3.4.x with full support for the 2026 Steam Controller (Triton).
+  SDL_COMMIT: ae9489adbaade98f44d74f90fc24a3a014ca2648
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc, ASan + UBSan
+            cc: gcc
+            cxx: g++
+            flags: -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all
+          - name: clang, TSan
+            cc: clang
+            cxx: clang++
+            flags: -fsanitize=thread
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=${{ matrix.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          "-DCMAKE_CXX_FLAGS=${{ matrix.flags }}"
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: ctest --test-dir build --output-on-failure
+
+  windows:
+    name: Windows (MSVC)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -A x64
+      - name: Build
+        run: cmake --build build --config Release -j
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      # Registers with Windows' own mDNS responder. An error means the call is
+      # wrong; a runner without DNS-SD only gets a warning.
+      - name: Discovery smoke test
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:RUNNER_TEMP 'host.log'
+          $config = Join-Path $env:RUNNER_TEMP 'clients.conf'
+          $host_process = Start-Process -FilePath build/host/Release/couchlink-host.exe -PassThru -NoNewWindow `
+            -ArgumentList @('run', '--no-attach', '--verbose', '--config', $config, '--log', $log)
+          Start-Sleep -Seconds 6
+          Stop-Process -Id $host_process.Id -Force
+          Get-Content $log
+          if (Select-String -Path $log -Pattern 'announcing this PC failed|could not describe' -Quiet) { exit 1 }
+          if (-not (Select-String -Path $log -Pattern 'can now find this PC' -Quiet)) {
+            Write-Host '::warning::DNS-SD registration was not confirmed on this runner'
+          }
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: couchlink-windows-x64
+          path: |
+            build/host/Release/couchlink-host.exe
+            build/host/Release/couchlink-sim.exe
+
+  macos:
+    name: macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build -j
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  couchlink-ios:
+    name: Couchlink (iOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate the Xcode project
+        working-directory: clients/couchlink-ios
+        run: xcodegen generate
+      - name: Build
+        working-directory: clients/couchlink-ios
+        run: >
+          set -o pipefail &&
+          xcodebuild -project Couchlink.xcodeproj -target Couchlink
+          -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/out"
+          CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+          build | tail -n 80
+      # Unsigned: a sideloading tool (Sideloadly, AltStore) signs it with your Apple ID.
+      - name: Package unsigned .ipa
+        run: |
+          app="$RUNNER_TEMP/out/Release-iphoneos/Couchlink.app"
+          test -d "$app"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/Couchlink-iOS.ipa" Payload)
+          ls -l Couchlink-iOS.ipa
+      - name: Upload .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: Couchlink-iOS.ipa
+          path: Couchlink-iOS.ipa
+          if-no-files-found: error
+
+  usbip-end-to-end:
+    name: End to end (Linux vhci-hcd + SDL)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install USB/IP kernel support and libusb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y "linux-modules-extra-$(uname -r)" "linux-tools-$(uname -r)" linux-tools-common libusb-1.0-0-dev
+          sudo modprobe vhci-hcd
+          # Not every cloud kernel ships usbhid; the checks below use libusb when it is missing.
+          sudo modprobe usbhid 2>/dev/null || echo "usbhid unavailable on this kernel"
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyusb
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCOUCHLINK_BUILD_TESTS=OFF
+          cmake --build build -j
+      - name: Build SDL (with libusb HIDAPI) and the probe
+        run: |
+          git clone --filter=blob:none https://github.com/libsdl-org/SDL.git "$RUNNER_TEMP/SDL"
+          git -C "$RUNNER_TEMP/SDL" checkout "$SDL_COMMIT"
+          cmake -S "$RUNNER_TEMP/SDL" -B "$RUNNER_TEMP/SDL/build" -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST_LIBRARY=OFF -DSDL_UNIX_CONSOLE_BUILD=ON \
+            -DSDL_HIDAPI_LIBUSB=ON -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/sdl"
+          cmake --build "$RUNNER_TEMP/SDL/build" -j
+          cmake --install "$RUNNER_TEMP/SDL/build"
+          cc -O2 -I"$RUNNER_TEMP/sdl/include" tests/integration/sdl_probe.c \
+            "$RUNNER_TEMP/sdl/lib/libSDL3.a" -lm -lpthread -ldl -o "$RUNNER_TEMP/sdl_probe"
+      - name: Pair, stream and attach
+        run: |
+          sudo ./build/host/couchlink-host --verbose --config "$RUNNER_TEMP/host.conf" --pin 424242 pair > "$RUNNER_TEMP/host.log" 2>&1 &
+          sleep 1
+          ./build/host/couchlink-sim --state "$RUNNER_TEMP/sim.pairing" --pin 424242 pair
+          ./build/host/couchlink-sim --state "$RUNNER_TEMP/sim.pairing" run 120 > "$RUNNER_TEMP/sim.log" 2>&1 &
+          sleep 3
+      - name: Check at the USB level (libusb)
+        run: sudo "$RUNNER_TEMP/venv/bin/python" tests/integration/check_usb.py
+      - name: Check haptics and settings reached the client, and nothing unsafe did
+        run: |
+          sleep 1
+          cat "$RUNNER_TEMP/sim.log"
+          grep -q "host sent output report 0x81" "$RUNNER_TEMP/sim.log"
+          grep -q "host sent setting 0x87" "$RUNNER_TEMP/sim.log"
+          ! grep -q "host sent setting 0x86" "$RUNNER_TEMP/sim.log"
+      - name: Check through hidraw
+        run: |
+          if lsmod | grep -q "^usbhid"; then
+            sudo python3 tests/integration/check_hidraw.py
+          else
+            echo "usbhid not available on this kernel; covered by the libusb check"
+          fi
+      - name: Check through SDL's Steam Controller driver
+        env:
+          SDL_HIDAPI_LIBUSB_WHITELIST: "0"
+        run: sudo --preserve-env=SDL_HIDAPI_LIBUSB_WHITELIST "$RUNNER_TEMP/sdl_probe"
+      - name: Logs
+        if: always()
+        run: |
+          echo "--- couchlink-host"; cat "$RUNNER_TEMP/host.log" || true
+          echo "--- couchlink-sim"; cat "$RUNNER_TEMP/sim.log" || true
+          echo "--- usbip port"; sudo usbip port || true
+          echo "--- dmesg"; sudo dmesg | grep -iE "usb|hid|vhci" | tail -n 40 || true
+          echo "--- usb interfaces"; for d in /sys/bus/usb/devices/*-*:*; do echo "$d: $(cat $d/modalias 2>/dev/null)"; done || true
