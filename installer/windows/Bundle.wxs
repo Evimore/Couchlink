@@ -32,7 +32,7 @@
     </BootstrapperApplication>
 
     <!-- Extra arguments for usbip-win2's setup; its window shows unless told otherwise. -->
-    <Variable Name="UsbipArgs" Value="/SP-" Overridable="yes" />
+    <Variable Name="UsbipArgs" Value="/SP-" Type="string" bal:Overridable="yes" />
 
     <util:FileSearch Id="UsbipExe"
                      Path="[ProgramFiles64Folder]USBip\usbip.exe"
