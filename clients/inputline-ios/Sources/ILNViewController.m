@@ -20,7 +20,8 @@
     UIStackView *_discoveredStack;
     NSString *_discoveredShown;  // what _discoveredStack shows, to rebuild only on change
     NSArray<NSString *> *_discoveredAddresses;  // by button tag
-    UILabel *_linkLabel;
+    UILabel *_linkLabel;       // below Connect: searching, pairing, no answer...
+    UILabel *_connectedLabel;  // above Disconnect: "Connected to ..."
     UILabel *_controllersLabel;
     UILabel *_timingNowLabel;
     UILabel *_timingForegroundLabel;
@@ -118,6 +119,9 @@
     _addressField.delegate = self;
     _addressField.text = [ILNBridge shared].status.pcAddress;
     [stack addArrangedSubview:_addressField];
+    _connectedLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
+    _connectedLabel.hidden = YES;
+    [stack addArrangedSubview:_connectedLabel];
     _connectButton = [self buttonWithTitle:@"Connect" action:@selector(connectOrDisconnect)];
     [stack addArrangedSubview:_connectButton];
     _discoveredStack = [[UIStackView alloc] init];
@@ -206,10 +210,14 @@
 - (void)refresh
 {
     ILNStatus *status = [ILNBridge shared].status;
+    // While connected, "Connected to ..." takes the address field's place, above Disconnect.
+    // Disconnected needs no text: the address field and Connect say it.
+    _connectedLabel.text = status.linkText;
+    _connectedLabel.hidden = !status.linkUp;
     _linkLabel.text = status.linkText;
+    _linkLabel.hidden = status.linkUp || status.linkState == ILNLinkStateDisconnected;
     _updateLabel.text = status.updateText;
     _updateLabel.hidden = status.updateText.length == 0;
-    // While connected, the address gives way to "Connected to ..." and Connect becomes Disconnect.
     _addressField.hidden = status.linkUp;
     [_connectButton setTitle:status.linkUp ? @"Disconnect" : @"Connect" forState:UIControlStateNormal];
     [_pauseButton setTitle:status.paused ? @"Connect to PC" : @"Disconnect from PC" forState:UIControlStateNormal];

@@ -22,7 +22,7 @@ The installer:
 - runs it as the **InputLine** service: it starts with Windows, runs in the background, and restarts by itself if something goes wrong,
 - allows UDP port 48150 through the Windows Firewall, from your local network and Tailscale only,
 - announces the PC on your local network, so the InputLine app finds it without you typing an address,
-- shows the **InputLine icon** in the taskbar's notification area, next to the clock. Its menu shows whether a device is connected, opens the log, and tells you when a newer InputLine is out (the service checks GitHub once a day). *Hide this icon* hides it; open **InputLine** from the Start menu to show it again.
+- shows the **InputLine icon** in the taskbar's notification area, next to the clock. A white badge with a green ▶ means the InputLine app is connected; a green badge with a white ▶ means a controller is plugged into Windows; a red ✕ means something needs you (see *Troubleshooting*). Its menu says the same in words, opens the log, and tells you when a newer InputLine is out (the service checks GitHub once a day). *Hide this icon* hides it; open **InputLine** from the Start menu to show it again.
 
 Its files are in `C:\ProgramData\InputLine`: the log (`inputline-host.log`), optional settings (`options.txt`), and your paired devices (in the `pairing` folder, which only administrators can open).
 

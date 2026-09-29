@@ -124,8 +124,10 @@ namespace inputline::tray {
       std::wstring notification_text;
       std::wstring notification_url;
       HICON normal_icon = nullptr;
-      HICON warning_icon = nullptr;  ///< with a red badge: something needs the user
-      std::wstring problem;          ///< what the badge is about, for the menu and tooltip
+      HICON warning_icon = nullptr;     ///< with a red X badge: something needs the user
+      HICON app_icon = nullptr;         ///< with a white badge, green play: the app is connected
+      HICON controller_icon = nullptr;  ///< with a green badge, white play: a controller is plugged in
+      std::wstring problem;             ///< what the badge is about, for the menu and tooltip
     };
 
     TrayState *g_tray = nullptr;
@@ -141,8 +143,14 @@ namespace inputline::tray {
       return false;
     }
 
-    /** @p base with a small red X badge in its top left corner. */
-    HICON badged_icon(HICON base, int size) {
+    enum class Badge {
+      kProblem,     ///< white X on red
+      kApp,         ///< green play on white
+      kController,  ///< white play on green
+    };
+
+    /** @p base with a small round badge in its top left corner. */
+    HICON badged_icon(HICON base, int size, Badge badge) {
       BITMAPINFO info {};
       info.bmiHeader.biSize = sizeof(info.bmiHeader);
       info.bmiHeader.biWidth = size;
@@ -186,22 +194,38 @@ namespace inputline::tray {
         DeleteObject(color);
         return nullptr;
       }
-      // A red circle with a white X and ring, top left, drawn with 4x4
-      // samples per pixel so it stays readable at 16 pixels.
+      // A coloured circle with a white ring and a symbol, top left, drawn
+      // with 4x4 samples per pixel so it stays readable at 16 pixels.
       const double radius = size * (size < 20 ? 0.23 : 0.19);
       const double ring = radius + std::max(0.9, size / 22.0);
       const double arm = radius * 0.52;
       const double half_stroke = std::max(0.55, size / 38.0);
-      // 0: outside, 1: white, 2: red
+      // The play triangle, nudged right so it looks centred.
+      const double play_left = -radius * 0.36;
+      const double play_right = radius * 0.62;
+      const double play_half_height = radius * 0.58;
+      const std::uint32_t colour = badge == Badge::kProblem ? 0xE53935 : 0x2E9E44;
+      // The app badge swaps them: a white circle with a coloured symbol.
+      const bool inverted = badge == Badge::kApp;
+      // 0: outside, 1: white, 2: colour
       auto sample = [&](double x, double y) {
         const double dx = x - ring;
         const double dy = y - ring;
         const double distance = std::sqrt(dx * dx + dy * dy);
-        if (distance <= radius) {
-          const double to_diagonal = std::min(std::abs(dx - dy), std::abs(dx + dy)) / std::sqrt(2.0);
-          return to_diagonal <= half_stroke && std::max(std::abs(dx), std::abs(dy)) <= arm ? 1 : 2;
+        if (distance > ring) {
+          return 0;
         }
-        return distance <= ring ? 1 : 0;
+        if (distance > radius) {
+          return 1;
+        }
+        bool symbol = false;
+        if (badge == Badge::kProblem) {
+          const double to_diagonal = std::min(std::abs(dx - dy), std::abs(dx + dy)) / std::sqrt(2.0);
+          symbol = to_diagonal <= half_stroke && std::max(std::abs(dx), std::abs(dy)) <= arm;
+        } else {
+          symbol = dx >= play_left && std::abs(dy) <= play_half_height * (play_right - dx) / (play_right - play_left);
+        }
+        return symbol != inverted ? 1 : 2;
       };
       const int limit = static_cast<int>(std::ceil(2 * ring)) + 1;
       for (int y = 0; y < std::min(size, limit); ++y) {
@@ -215,9 +239,9 @@ namespace inputline::tray {
                 continue;
               }
               ++covered;
-              red += kind == 1 ? 255 : 0xE5;
-              green += kind == 1 ? 255 : 0x39;
-              blue += kind == 1 ? 255 : 0x35;
+              red += kind == 1 ? 255 : (colour >> 16) & 0xFF;
+              green += kind == 1 ? 255 : (colour >> 8) & 0xFF;
+              blue += kind == 1 ? 255 : colour & 0xFF;
             }
           }
           if (covered == 0) {
@@ -226,8 +250,8 @@ namespace inputline::tray {
           const double coverage = covered / 16.0;
           std::uint32_t &pixel = pixels[y * size + x];
           const double old_alpha = (pixel >> 24) & 0xFF;
-          const auto mix = [&](double badge, int shift) {
-            return static_cast<std::uint32_t>(badge / covered * coverage + ((pixel >> shift) & 0xFF) * (1 - coverage)) & 0xFF;
+          const auto mix = [&](double sum, int shift) {
+            return static_cast<std::uint32_t>(sum / covered * coverage + ((pixel >> shift) & 0xFF) * (1 - coverage)) & 0xFF;
           };
           const auto alpha = static_cast<std::uint32_t>(std::max(old_alpha, 255 * coverage));
           pixel = (alpha << 24) | (mix(red, 16) << 16) | (mix(green, 8) << 8) | mix(blue, 0);
@@ -298,7 +322,14 @@ namespace inputline::tray {
         tray.problem = L"usbip-win2 " + desktop::widen(tray.status.usbip_version) + L" is too old";
       }
       const std::wstring tip = L"InputLine: " + (tray.problem.empty() ? tray.summary : tray.problem);
-      HICON wanted = !tray.problem.empty() && tray.warning_icon != nullptr ? tray.warning_icon : tray.normal_icon;
+      // A problem first; then a plugged-in controller; then a connected app.
+      HICON wanted = !tray.problem.empty() ? tray.warning_icon
+                   : tray.running && tray.status.controllers > 0 ? tray.controller_icon
+                   : tray.running && !tray.status.devices.empty() ? tray.app_icon
+                   : nullptr;
+      if (wanted == nullptr) {
+        wanted = tray.normal_icon;
+      }
       if (wcsncmp(tray.icon.szTip, tip.c_str(), ARRAYSIZE(tray.icon.szTip) - 1) != 0 || tray.icon.hIcon != wanted) {
         tray.icon.uFlags = NIF_TIP | NIF_SHOWTIP | NIF_ICON;
         tray.icon.hIcon = wanted;
@@ -566,7 +597,12 @@ namespace inputline::tray {
       return static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
     };
     tray.normal_icon = load_icon(SM_CXSMICON);
-    tray.warning_icon = tray.normal_icon != nullptr ? badged_icon(tray.normal_icon, GetSystemMetrics(SM_CXSMICON)) : nullptr;
+    if (tray.normal_icon != nullptr) {
+      const int size = GetSystemMetrics(SM_CXSMICON);
+      tray.warning_icon = badged_icon(tray.normal_icon, size, Badge::kProblem);
+      tray.app_icon = badged_icon(tray.normal_icon, size, Badge::kApp);
+      tray.controller_icon = badged_icon(tray.normal_icon, size, Badge::kController);
+    }
     tray.icon.hIcon = tray.normal_icon;
     tray.icon.hBalloonIcon = load_icon(SM_CXICON);
     wcsncpy_s(tray.icon.szTip, L"InputLine", _TRUNCATE);
@@ -580,7 +616,7 @@ namespace inputline::tray {
     g_tray = nullptr;
     Shell_NotifyIconW(NIM_DELETE, &tray.icon);
     DestroyWindow(window);
-    for (HICON handle : {tray.normal_icon, tray.warning_icon, tray.icon.hBalloonIcon}) {
+    for (HICON handle : {tray.normal_icon, tray.warning_icon, tray.app_icon, tray.controller_icon, tray.icon.hBalloonIcon}) {
       if (handle != nullptr) {
         DestroyIcon(handle);
       }
