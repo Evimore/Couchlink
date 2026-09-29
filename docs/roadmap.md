@@ -18,6 +18,8 @@
 - [x] Automatic discovery: `couchlink-host` announces the PC over DNS-SD (`_couchlink._udp`); Couchlink lists it and follows a paired PC to a new address
 - [x] Couchlink remembers every address a PC answered on (home network, VPN) and tries them in turn
 - [x] Releases from GitHub's website: Actions → Release → Run workflow
+- [x] Protocol version 2: X25519 pairing, ChaCha20-Poly1305 encryption, version negotiation with frozen wire-format tests
+- [x] Disconnect / Connect in the app: hand the controller back to the iPad; it goes back to the PC when switched off and on
 - [x] Windows installer (MSI): `couchlink-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
 ## Phases
@@ -41,8 +43,7 @@
 
 ## Later
 
-- [ ] Public-key pairing (X25519) so the pairing exchange reveals nothing to a passive observer
-- [ ] Optional payload encryption (ChaCha20-Poly1305)
+- [ ] Password-authenticated pairing (a PAKE such as CPace), so even an active attacker during pairing learns nothing
 - [ ] Windows service mode and a tray icon for `couchlink-host`
 - [ ] 2015 Steam Controller (BLE `0x1106`, wired `28DE:1102` persona)
 - [ ] Battery reports over Bluetooth

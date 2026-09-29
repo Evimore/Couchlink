@@ -25,6 +25,7 @@
     UILabel *_timingBackgroundLabel;
     UILabel *_eventsLabel;
     UIButton *_shareButton;
+    UIButton *_pauseButton;
     UIAlertController *_codeAlert;
     NSTimer *_refreshTimer;
 }
@@ -130,6 +131,10 @@
     [stack addArrangedSubview:[self heading:@"Controller"]];
     _controllersLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
     [stack addArrangedSubview:_controllersLabel];
+    _pauseButton = [self buttonWithTitle:@"Disconnect from the PC" action:@selector(togglePaused)];
+    [stack addArrangedSubview:_pauseButton];
+    [stack addArrangedSubview:[self note:@"Disconnect to use the controller with this device (its pointer works again). "
+                                          "It goes back to the PC when you tap Connect, or when you switch the controller off and on."]];
     [stack addArrangedSubview:[self buttonWithTitle:@"Pair a new controller" action:@selector(pairController)]];
     [stack addArrangedSubview:[self note:@"Put the controller in Bluetooth pairing mode first, then tap the button and accept the pairing request. "
                                           "Paired controllers reconnect by themselves when you switch them on."]];
@@ -192,6 +197,7 @@
 {
     CLKStatus *status = [CLKBridge shared].status;
     _linkLabel.text = status.linkText;
+    [_pauseButton setTitle:status.paused ? @"Connect to the PC" : @"Disconnect from the PC" forState:UIControlStateNormal];
     [self showDiscoveredPCs:status];
     _controllersLabel.text = status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"\n"]
                                                           : @"No controller connected. Switch it on, or pair a new one.";
@@ -239,6 +245,12 @@
 }
 
 #pragma mark - Actions
+
+- (void)togglePaused
+{
+    [[CLKBridge shared] setPaused:![CLKBridge shared].status.paused];
+    [self refresh];
+}
 
 - (void)useDiscoveredPC:(UIButton *)sender
 {

@@ -467,6 +467,7 @@ namespace {
     options.bind_address = args.bind;
     options.port = args.port;
     options.host_name = args.name.empty() ? computer_name() : args.name;
+  options.software_version = COUCHLINK_VERSION;
     options.remote_pairing = args.remote_pairing;
     options.show_code = show_code;
     options.stats_interval = std::chrono::seconds(args.stats_seconds);

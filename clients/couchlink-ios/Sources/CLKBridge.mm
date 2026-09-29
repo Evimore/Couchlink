@@ -38,6 +38,9 @@ namespace {
     const NSTimeInterval kLinkLostAfter = 4.0;
     const NSTimeInterval kAttachRetry = 0.3;
     const NSTimeInterval kLizardInterval = 2.0;
+    // Without a PC for this long, the controller works as this device's
+    // mouse again (its built-in mode), so it is never stuck doing nothing.
+    const NSTimeInterval kMouseModeAfterLinkDown = 10.0;
     const NSTimeInterval kLiveTimingWindow = 5.0;
     // couchlink-host drops a session after 3 s of silence. An app in the
     // background does not run while the controller is idle, so after a longer
@@ -47,7 +50,8 @@ namespace {
     const int kMaxControllers = 4;
 
     NSString *const kKeychainService = @"Couchlink";
-    NSString *const kKeychainAccount = @"pairings";
+    // "-v2": pairings from before the safer pairing exchange are not used.
+    NSString *const kKeychainAccount = @"pairings-v2";
     NSString *const kAddressDefaultsKey = @"CLKPCAddress";
     // Every address a PC answered on (home network, VPN...), newest first, by
     // host name; and the host last connected to. When the saved address stops
@@ -161,6 +165,7 @@ namespace {
 @property (nonatomic, assign) BOOL attached;
 @property (nonatomic, assign) CFAbsoluteTime lastAttachSent;
 @property (nonatomic, assign) CFAbsoluteTime lastLizardSent;
+@property (nonatomic, assign) BOOL mouseModeOn;  // handed back to this device
 // Each input datagram also carries the previous report, so the PC can make
 // up for a lost datagram.
 @property (nonatomic, assign) std::uint32_t sequence;
@@ -202,9 +207,13 @@ namespace {
     double _rttMs;
 
     std::unique_ptr<link::ClientSession> _session;
-    link::Pairing _pendingPairing;
-    std::uint64_t _pairStartNonce;
+    link::ClientSession::PairingAttempt _pairingAttempt;
+    link::Key _hostPairingKey;  // the PC's temporary key, from its ProbeReply
     BOOL _codeRequested;
+    NSString *_versionProblem;  // set when the PC and this app can't talk: which one to update
+    BOOL _paused;  // the user tapped Disconnect
+    CFAbsoluteTime _linkDownSince;  // 0 while connected
+    NSString *_appVersion;
     std::vector<std::uint8_t> _pendingPairRequest;
 
     NSMutableDictionary<NSUUID *, CLKController *> *_controllers;
@@ -248,6 +257,7 @@ namespace {
         _eventTime.dateFormat = @"HH:mm:ss.SSS";
         NSString *deviceName = [UIDevice currentDevice].name;  // shared is first used on the main thread
         _clientName = deviceName.length > 0 ? deviceName : @"Couchlink";
+        _appVersion = [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"";
         _queue = dispatch_queue_create("com.evimore.couchlink.link", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
         _address = [[NSUserDefaults standardUserDefaults] stringForKey:kAddressDefaultsKey];
@@ -310,6 +320,7 @@ namespace {
             [self sendDatagram:self->_session->make_bye()];
         }
         self->_address = trimmed;
+        self->_versionProblem = nil;
         self->_savedAddress = trimmed;
         self->_candidateIndex = 0;
         self->_hostName = nil;
@@ -475,11 +486,13 @@ namespace {
         status.linkState = self->_state;
         status.pcAddress = self->_address ?: @"";
         status.pcName = self->_hostName ?: @"";
+        status.paused = self->_paused;
         status.rttMs = self->_state == CLKLinkStateConnected ? self->_rttMs : -1;
         status.linkText = [self linkText];
         NSMutableArray<NSString *> *controllers = [NSMutableArray array];
         for (CLKController *controller in self->_controllers.allValues) {
-            NSString *state = self->_state != CLKLinkStateConnected ? @"connected to this device"
+            NSString *state = self->_paused ? @"working with this device (disconnected from the PC)"
+                            : self->_state != CLKLinkStateConnected ? @"connected to this device"
                             : controller.attached ? @"full Steam Input on the PC"
                             : @"plugging in on the PC...";
             [controllers addObject:[NSString stringWithFormat:@"%@: %@", controller.device.name, state]];
@@ -503,6 +516,9 @@ namespace {
         case CLKLinkStateSearching:
             return [NSString stringWithFormat:@"Looking for couchlink-host on %@...", _address];
         case CLKLinkStateNotFound:
+            if (_versionProblem != nil) {
+                return _versionProblem;
+            }
             return [NSString stringWithFormat:@"No answer from %@. Is couchlink-host running there, and is UDP %u allowed through its firewall? Still trying.", _address, link::kDefaultPort];
         case CLKLinkStatePairing:
             return [NSString stringWithFormat:@"Pairing with %@: enter the code shown on its screen.", _hostName ?: _address];
@@ -721,6 +737,11 @@ namespace {
         static NSString *const names[] = {@"no PC", @"searching", @"not found", @"pairing", @"connecting", @"connected"};
         [self logEvent:[NSString stringWithFormat:@"Link: %@", names[state]]];
     }
+    if (state == CLKLinkStateConnected) {
+        _linkDownSince = 0;
+    } else if (_state == CLKLinkStateConnected || _linkDownSince == 0) {
+        _linkDownSince = CFAbsoluteTimeGetCurrent();
+    }
     _state = state;
     _stateEnteredAt = CFAbsoluteTimeGetCurrent();
     _lastSend = 0;
@@ -781,7 +802,7 @@ namespace {
             if (now - _lastSend >= kPairRetry) {
                 _lastSend = now;
                 if (_pendingPairRequest.empty()) {
-                    [self sendDatagram:link::ClientSession::make_pair_start(_pairStartNonce, ToStdString([self clientName]))];
+                    [self sendDatagram:link::ClientSession::make_pair_start(_pairingAttempt, ToStdString([self clientName]))];
                 } else {
                     [self sendDatagram:_pendingPairRequest];
                 }
@@ -817,18 +838,28 @@ namespace {
                 [self sendDatagram:_session->make_ping(WallClockMicroseconds())];
             }
             for (CLKController *controller in _controllers.allValues) {
-                if (!controller.attached && controller.identified && now - controller.lastAttachSent >= kAttachRetry) {
+                if (!self->_paused && !controller.attached && controller.identified && now - controller.lastAttachSent >= kAttachRetry) {
                     [self sendAttach:controller];
                 }
             }
             break;
     }
 
-    // Keep the controller out of keyboard/mouse emulation.
+    // While the controller goes to the PC, keep it out of its built-in
+    // keyboard/mouse mode (it would also move this device's pointer). Otherwise
+    // hand that mode back.
+    const BOOL toPC = !_paused && (_state == CLKLinkStateConnected || (_linkDownSince > 0 && now - _linkDownSince < kMouseModeAfterLinkDown));
     for (CLKController *controller in _controllers.allValues) {
-        if (now - controller.lastLizardSent >= kLizardInterval) {
-            controller.lastLizardSent = now;
-            [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 0)];
+        if (toPC) {
+            if (controller.mouseModeOn || now - controller.lastLizardSent >= kLizardInterval) {
+                controller.lastLizardSent = now;
+                controller.mouseModeOn = NO;
+                [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 0)];
+            }
+        } else if (!controller.mouseModeOn) {
+            controller.mouseModeOn = YES;
+            [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 1)];
+            [self logEvent:[NSString stringWithFormat:@"%@ works as this device's mouse again", controller.device.name]];
         }
     }
 
@@ -853,6 +884,27 @@ namespace {
             if (_hostName.length == 0) {
                 _hostName = _address;
             }
+            NSString *hostVersion = reply->software_version.empty() ? @"an older version" : ToNSString(reply->software_version);
+            NSString *problem = nil;
+            switch (link::check_compatibility(*reply)) {
+                case link::Compatibility::kUpdateHost:
+                    problem = [NSString stringWithFormat:@"%@ runs Couchlink %@, which is older than this app. Install the latest Couchlink on the PC.", _hostName, hostVersion];
+                    break;
+                case link::Compatibility::kUpdateClient:
+                    problem = [NSString stringWithFormat:@"%@ runs Couchlink %@, which needs a newer version of this app. Update the app.", _hostName, hostVersion];
+                    break;
+                case link::Compatibility::kCompatible:
+                    break;
+            }
+            if (problem != nil) {
+                if (![problem isEqualToString:_versionProblem]) {
+                    [self logEvent:problem];
+                }
+                _versionProblem = problem;
+                _state = CLKLinkStateNotFound;  // keep probing: it connects once updated
+                return;
+            }
+            _versionProblem = nil;
             link::Pairing pairing;
             if ([CLKBridge pairingForHostName:_hostName into:pairing]) {
                 [self startSessionWithPairing:pairing];
@@ -864,7 +916,10 @@ namespace {
 
         case CLKLinkStatePairing: {
             if (_pendingPairRequest.empty()) {
-                const auto reply = link::ClientSession::parse_probe_reply(data, length, _pairStartNonce);
+                const auto reply = link::ClientSession::parse_probe_reply(data, length, _pairingAttempt.nonce);
+                if (reply && reply->pairing_open) {
+                    _hostPairingKey = reply->pairing_public_key;
+                }
                 if (reply && !_codeRequested) {
                     _codeRequested = YES;
                     NSString *message = reply->pairing_open
@@ -874,16 +929,16 @@ namespace {
                 }
                 return;
             }
-            const auto result = link::ClientSession::parse_pair_result(data, length, _pendingPairing);
+            const auto result = link::ClientSession::parse_pair_result(data, length, _pairingAttempt);
             if (!result) {
                 return;
             }
             if (*result) {
-                [CLKBridge savePairing:_pendingPairing forHostName:_hostName];
+                const link::Pairing pairing = _pairingAttempt.pairing();
+                [CLKBridge savePairing:pairing forHostName:_hostName];
                 [self tellUser:[NSString stringWithFormat:@"Paired with %@.", _hostName]];
-                [self startSessionWithPairing:_pendingPairing];
+                [self startSessionWithPairing:pairing];
             } else {
-                _pendingPairing = link::ClientSession::new_pairing(SecureRandom);
                 _pendingPairRequest.clear();
                 [self askForCode:@"That code did not match. Enter the code shown on the PC's screen."];
             }
@@ -909,7 +964,7 @@ namespace {
 
 - (void)startSessionWithPairing:(const link::Pairing &)pairing
 {
-    _session = std::make_unique<link::ClientSession>(pairing, ToStdString([self clientName]), SecureRandom);
+    _session = std::make_unique<link::ClientSession>(pairing, ToStdString([self clientName]), SecureRandom, ToStdString(_appVersion));
     [self enterState:CLKLinkStateConnecting];
 }
 
@@ -1002,6 +1057,39 @@ namespace {
     [self sendDatagram:_session->make_attach(attach)];
 }
 
+- (void)setPaused:(BOOL)paused
+{
+    dispatch_async(_queue, ^{
+        if (self->_paused == paused) {
+            return;
+        }
+        self->_paused = paused;
+        if (paused) {
+            if (self->_state == CLKLinkStateConnected && self->_session) {
+                [self detachAll];
+            }
+            for (CLKController *controller in self->_controllers.allValues) {
+                controller.attached = NO;
+            }
+            [self logEvent:@"Disconnected: the controller works with this device until you tap Connect or switch it off and on"];
+        } else {
+            [self logEvent:@"Connected: sending the controller to the PC again"];
+        }
+        [self service];
+    });
+}
+
+- (void)prepareForTermination
+{
+    // Best effort: iOS gives little time, and nothing at all when it ends a
+    // suspended app. Switching the controller off and on restores it too.
+    dispatch_sync(_queue, ^{
+        for (CLKController *controller in self->_controllers.allValues) {
+            [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 1)];
+        }
+    });
+}
+
 - (void)detachAll
 {
     for (CLKController *controller in _controllers.allValues) {
@@ -1018,8 +1106,8 @@ namespace {
 
 - (void)beginPairing
 {
-    _pendingPairing = link::ClientSession::new_pairing(SecureRandom);
-    _pairStartNonce = RandomNonce();
+    _pairingAttempt = link::ClientSession::begin_pairing(SecureRandom);
+    _hostPairingKey = link::Key {};
     _pendingPairRequest.clear();
     _codeRequested = NO;
     _session.reset();
@@ -1050,8 +1138,11 @@ namespace {
             [self askForCode:[NSString stringWithFormat:@"The code has %d digits. Enter the code shown on the PC's screen.", (int)link::kPinDigits]];
             return;
         }
-        self->_pendingPairRequest = link::ClientSession::make_pair_request(self->_pendingPairing, ToStdString(digits),
-                                                                            ToStdString([self clientName]), RandomNonce());
+        if (!link::ClientSession::enter_pin(self->_pairingAttempt, self->_hostPairingKey, ToStdString(digits))) {
+            [self askForCode:[NSString stringWithFormat:@"%@ isn't accepting new devices right now. Tap Connect to try again.", self->_hostName]];
+            return;
+        }
+        self->_pendingPairRequest = link::ClientSession::make_pair_request(self->_pairingAttempt, ToStdString([self clientName]));
         self->_lastSend = 0;
     });
 }
@@ -1141,10 +1232,16 @@ namespace {
         self->_controllers[device.identifier] = controller;
         [self logEvent:[NSString stringWithFormat:@"Controller connected: %@ (reports 0x%02x)", device.name, device.inputReportId]];
         [self rememberController:device.identifier];
+        if (self->_paused) {
+            // Switching the controller back on after Disconnect: to the PC again.
+            self->_paused = NO;
+            [self logEvent:@"Controller reconnected: sending it to the PC again"];
+        }
 
-        [device sendFeatureReport:SettingReport(kSettingLizardMode, 0)];
-        controller.lastLizardSent = CFAbsoluteTimeGetCurrent();
+        // Mouse mode is on after power-up; the next service tick decides.
+        controller.mouseModeOn = YES;
         [self identify:controller];
+        [self service];
     });
 }
 
@@ -1189,7 +1286,7 @@ namespace {
             [self logEvent:[NSString stringWithFormat:@"Resuming after %.1f s of silence: starting a new session", now - self->_lastDatagramSent]];
             [self enterState:CLKLinkStateConnecting];
         }
-        if (controller != nil && self->_state == CLKLinkStateConnected && controller.attached) {
+        if (controller != nil && self->_state == CLKLinkStateConnected && controller.attached && !self->_paused) {
             controller.sequence += 1;
             NSData *previous = controller.previousReport;
             [self sendDatagram:self->_session->make_input_bundle(controller.linkIndex, controller.sequence, (const std::uint8_t *)copy.bytes, copy.length,

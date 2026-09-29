@@ -21,4 +21,9 @@
     return YES;
 }
 
+- (void)applicationWillTerminate:(UIApplication *)application
+{
+    [[CLKBridge shared] prepareForTermination];
+}
+
 @end

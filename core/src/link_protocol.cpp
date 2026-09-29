@@ -8,8 +8,13 @@
 namespace couchlink::link {
 
   namespace {
-    constexpr char kSessionLabel[] = "couchlink session v1";
-    constexpr char kPairLabel[] = "couchlink pair v1";
+    constexpr char kSessionLabel[] = "couchlink session v2";
+    constexpr char kClientToHostLabel[] = "client to host";
+    constexpr char kHostToClientLabel[] = "host to client";
+    constexpr char kPairLabel[] = "couchlink pair v2";
+    constexpr char kPairKeyLabel[] = "pairing key";
+    constexpr char kPairResultLabel[] = "pairing result";
+    constexpr char kPairProofLabel[] = "pairing proof";
 
     class Writer {
     public:
@@ -126,6 +131,17 @@ namespace couchlink::link {
         return pos_ == length_;
       }
 
+      /** A string of up to @p max bytes, length-prefixed. */
+      bool text(std::string &value, std::size_t max) {
+        std::uint8_t length = 0;
+        if (!u8(length) || length > max || !have(length)) {
+          return false;
+        }
+        value.assign(reinterpret_cast<const char *>(data_ + pos_), length);
+        pos_ += length;
+        return true;
+      }
+
     private:
       bool have(std::size_t n) const {
         return length_ - pos_ >= n;
@@ -167,6 +183,26 @@ namespace couchlink::link {
       return false;
     }
 
+    Key hmac_key(const void *key, std::size_t key_length, const std::vector<std::uint8_t> &message) {
+      const auto digest = HmacSha256::mac(key, key_length, message.data(), message.size());
+      Key out {};
+      std::memcpy(out.data(), digest.data(), out.size());
+      return out;
+    }
+
+    /** Session nonce: four zero bytes, then the datagram counter. */
+    crypto::Nonce12 session_nonce(std::uint64_t counter) {
+      crypto::Nonce12 nonce {};
+      for (int i = 0; i < 8; ++i) {
+        nonce[4 + i] = static_cast<std::uint8_t>(counter >> (8 * i));
+      }
+      return nonce;
+    }
+
+    bool version_neutral(Type type) {
+      return type == Type::kProbe || type == Type::kProbeReply;
+    }
+
     template<typename T>
     std::optional<T> finish(Reader &reader, T value) {
       if (!reader.done()) {
@@ -195,7 +231,7 @@ namespace couchlink::link {
   std::vector<std::uint8_t> seal(const Header &header, const std::vector<std::uint8_t> &payload, const Key *key) {
     Writer writer;
     writer.u32(kMagic);
-    writer.u8(kVersion);
+    writer.u8(header.version);
     writer.u8(static_cast<std::uint8_t>(header.type));
     writer.u16(static_cast<std::uint16_t>(payload.size()));
     writer.u32(header.client_id);
@@ -203,12 +239,28 @@ namespace couchlink::link {
     writer.bytes(payload.data(), payload.size());
     auto out = writer.take();
 
-    if (key_kind(header.type) != KeyKind::kNone) {
-      if (key == nullptr) {
-        return {};
+    switch (key_kind(header.type)) {
+      case KeyKind::kNone:
+        break;
+      case KeyKind::kPairing: {
+        if (key == nullptr) {
+          return {};
+        }
+        const auto tag = tag_for(*key, out.data(), out.size());
+        out.insert(out.end(), tag.begin(), tag.end());
+        break;
       }
-      const auto tag = tag_for(*key, out.data(), out.size());
-      out.insert(out.end(), tag.begin(), tag.end());
+      case KeyKind::kSession: {
+        if (key == nullptr) {
+          return {};
+        }
+        // The header stays readable (the receiver needs it) but is authenticated.
+        const auto tag = crypto::aead_seal(
+          *key, session_nonce(header.counter), out.data(), kHeaderSize, out.data() + kHeaderSize, out.data() + kHeaderSize, payload.size()
+        );
+        out.insert(out.end(), tag.begin(), tag.end());
+        break;
+      }
     }
     return out;
   }
@@ -220,18 +272,21 @@ namespace couchlink::link {
 
     Reader reader(data, length);
     std::uint32_t magic = 0;
-    std::uint8_t version = 0, type = 0;
+    std::uint8_t type = 0;
     Header header;
     reader.u32(magic);
-    reader.u8(version);
+    reader.u8(header.version);
     reader.u8(type);
     reader.u16(header.payload_length);
     reader.u32(header.client_id);
     reader.u64(header.counter);
-    if (magic != kMagic || version != kVersion || !known_type(type) || header.payload_length > kMaxPayload) {
+    if (magic != kMagic || header.version == 0 || !known_type(type) || header.payload_length > kMaxPayload) {
       return std::nullopt;
     }
     header.type = static_cast<Type>(type);
+    if (header.version != kVersion && !version_neutral(header.type)) {
+      return std::nullopt;
+    }
 
     const std::size_t expected = kHeaderSize + header.payload_length +
                                  (key_kind(header.type) == KeyKind::kNone ? 0 : kTagSize);
@@ -247,46 +302,111 @@ namespace couchlink::link {
       return std::nullopt;
     }
 
-    if (key_kind(header->type) != KeyKind::kNone) {
-      if (key == nullptr) {
-        return std::nullopt;
-      }
-      const std::size_t signed_length = length - kTagSize;
-      const auto expected = tag_for(*key, data, signed_length);
-      if (!constant_time_equal(expected.data(), data + signed_length, kTagSize)) {
-        return std::nullopt;
-      }
-    }
-
     Datagram datagram;
     datagram.header = *header;
     datagram.payload.assign(data + kHeaderSize, data + kHeaderSize + header->payload_length);
+
+    switch (key_kind(header->type)) {
+      case KeyKind::kNone:
+        break;
+      case KeyKind::kPairing: {
+        if (key == nullptr) {
+          return std::nullopt;
+        }
+        const std::size_t signed_length = length - kTagSize;
+        const auto expected = tag_for(*key, data, signed_length);
+        if (!constant_time_equal(expected.data(), data + signed_length, kTagSize)) {
+          return std::nullopt;
+        }
+        break;
+      }
+      case KeyKind::kSession: {
+        if (key == nullptr) {
+          return std::nullopt;
+        }
+        crypto::Tag16 tag {};
+        std::memcpy(tag.data(), data + length - kTagSize, kTagSize);
+        if (!crypto::aead_open(
+              *key, session_nonce(header->counter), data, kHeaderSize, datagram.payload.data(), datagram.payload.data(),
+              datagram.payload.size(), tag
+            )) {
+          return std::nullopt;
+        }
+        break;
+      }
+    }
     return datagram;
   }
 
-  Key derive_session_key(const Key &pairing_key, std::uint64_t client_nonce, std::uint64_t host_nonce) {
+  std::optional<std::uint8_t> wire_version(const std::uint8_t *data, std::size_t length) {
+    if (data == nullptr || length < kHeaderSize) {
+      return std::nullopt;
+    }
+    Reader reader(data, length);
+    std::uint32_t magic = 0;
+    std::uint8_t version = 0;
+    reader.u32(magic);
+    reader.u8(version);
+    if (magic != kMagic) {
+      return std::nullopt;
+    }
+    return version;
+  }
+
+  SessionKeys derive_session_keys(const Key &pairing_key, std::uint64_t client_nonce, std::uint64_t host_nonce) {
     Writer writer;
     writer.bytes(kSessionLabel, sizeof(kSessionLabel) - 1);
     writer.u64(client_nonce);
     writer.u64(host_nonce);
-    const auto input = writer.take();
-    const auto digest = HmacSha256::mac(pairing_key.data(), pairing_key.size(), input.data(), input.size());
-    Key key {};
-    std::memcpy(key.data(), digest.data(), key.size());
-    return key;
+    const Key base = hmac_key(pairing_key.data(), pairing_key.size(), writer.take());
+
+    SessionKeys keys;
+    keys.client_to_host = hmac_key(base.data(), base.size(), std::vector<std::uint8_t>(kClientToHostLabel, kClientToHostLabel + sizeof(kClientToHostLabel) - 1));
+    keys.host_to_client = hmac_key(base.data(), base.size(), std::vector<std::uint8_t>(kHostToClientLabel, kHostToClientLabel + sizeof(kHostToClientLabel) - 1));
+    return keys;
   }
 
-  std::array<std::uint8_t, kTagSize> pairing_proof(const std::string &pin, std::uint32_t client_id, const Key &key, std::uint64_t nonce) {
-    Writer writer;
-    writer.bytes(kPairLabel, sizeof(kPairLabel) - 1);
-    writer.u32(client_id);
-    writer.bytes(key.data(), key.size());
-    writer.u64(nonce);
-    const auto input = writer.take();
-    const auto digest = HmacSha256::mac(pin.data(), pin.size(), input.data(), input.size());
-    std::array<std::uint8_t, kTagSize> proof {};
-    std::memcpy(proof.data(), digest.data(), proof.size());
-    return proof;
+  std::optional<PairingKeys> derive_pairing_keys(
+    const Key &own_secret, const Key &peer_public, std::uint32_t client_id, const Key &client_public,
+    const Key &host_public, std::uint64_t nonce, const std::string &pin
+  ) {
+    Key shared {};
+    if (!crypto::x25519(own_secret, peer_public, shared)) {
+      return std::nullopt;
+    }
+    // Everything both sides saw: binds the keys to this exchange.
+    Writer transcript;
+    transcript.bytes(kPairLabel, sizeof(kPairLabel) - 1);
+    transcript.u32(client_id);
+    transcript.bytes(client_public.data(), client_public.size());
+    transcript.bytes(host_public.data(), host_public.size());
+    transcript.u64(nonce);
+    const auto base = transcript.take();
+
+    auto with = [&base](const char *label, std::size_t label_length, const std::string &extra) {
+      std::vector<std::uint8_t> message = base;
+      message.insert(message.end(), label, label + label_length);
+      message.insert(message.end(), extra.begin(), extra.end());
+      return message;
+    };
+
+    PairingKeys keys;
+    keys.pairing_key = hmac_key(shared.data(), shared.size(), with(kPairKeyLabel, sizeof(kPairKeyLabel) - 1, pin));
+    keys.result_key = hmac_key(shared.data(), shared.size(), with(kPairResultLabel, sizeof(kPairResultLabel) - 1, {}));
+    const Key proof = hmac_key(keys.pairing_key.data(), keys.pairing_key.size(), with(kPairProofLabel, sizeof(kPairProofLabel) - 1, {}));
+    std::memcpy(keys.proof.data(), proof.data(), keys.proof.size());
+    shared.fill(0);
+    return keys;
+  }
+
+  Compatibility check_compatibility(const ProbeReply &reply, std::uint8_t client_version) {
+    if (client_version > reply.max_version) {
+      return Compatibility::kUpdateHost;
+    }
+    if (client_version < reply.min_version) {
+      return Compatibility::kUpdateClient;
+    }
+    return Compatibility::kCompatible;
   }
 
   bool ReplayGuard::accept(std::uint64_t counter) {
@@ -312,10 +432,17 @@ namespace couchlink::link {
   }
 
   std::vector<std::uint8_t> encode(const ProbeReply &message) {
+    // Only ever append fields: every version reads this message.
     Writer w;
     w.u64(message.nonce);
     w.u8(message.pairing_open ? 1 : 0);
     w.name(message.host_name);
+    w.u8(message.min_version);
+    w.u8(message.max_version);
+    const auto version = message.software_version.substr(0, kMaxSoftwareVersionLength);
+    w.u8(static_cast<std::uint8_t>(version.size()));
+    w.bytes(version.data(), version.size());
+    w.bytes(message.pairing_public_key.data(), message.pairing_public_key.size());
     return w.take();
   }
 
@@ -328,7 +455,7 @@ namespace couchlink::link {
 
   std::vector<std::uint8_t> encode(const PairRequest &message) {
     Writer w;
-    w.bytes(message.key.data(), message.key.size());
+    w.bytes(message.client_public_key.data(), message.client_public_key.size());
     w.u64(message.nonce);
     w.name(message.client_name);
     w.bytes(message.proof.data(), message.proof.size());
@@ -345,6 +472,9 @@ namespace couchlink::link {
     Writer w;
     w.u64(message.client_nonce);
     w.name(message.client_name);
+    const auto version = message.software_version.substr(0, kMaxSoftwareVersionLength);
+    w.u8(static_cast<std::uint8_t>(version.size()));
+    w.bytes(version.data(), version.size());
     return w.take();
   }
 
@@ -427,7 +557,7 @@ namespace couchlink::link {
     return finish(r, m);
   }
 
-  std::optional<ProbeReply> decode_probe_reply(const std::vector<std::uint8_t> &payload) {
+  std::optional<ProbeReply> decode_probe_reply(const std::vector<std::uint8_t> &payload, std::uint8_t version) {
     Reader r(payload.data(), payload.size());
     ProbeReply m;
     std::uint8_t open = 0;
@@ -435,7 +565,17 @@ namespace couchlink::link {
       return std::nullopt;
     }
     m.pairing_open = open == 1;
-    return finish(r, m);
+    if (version == 1) {
+      m.min_version = m.max_version = 1;
+      m.software_version.clear();
+      return finish(r, m);
+    }
+    if (!r.u8(m.min_version) || !r.u8(m.max_version) || m.min_version > m.max_version ||
+        !r.text(m.software_version, kMaxSoftwareVersionLength) ||
+        !r.bytes(m.pairing_public_key.data(), m.pairing_public_key.size())) {
+      return std::nullopt;
+    }
+    return m;  // later versions may append fields: ignore them
   }
 
   std::optional<PairStart> decode_pair_start(const std::vector<std::uint8_t> &payload) {
@@ -450,7 +590,7 @@ namespace couchlink::link {
   std::optional<PairRequest> decode_pair_request(const std::vector<std::uint8_t> &payload) {
     Reader r(payload.data(), payload.size());
     PairRequest m;
-    if (!r.bytes(m.key.data(), m.key.size()) || !r.u64(m.nonce) || !r.name(m.client_name) ||
+    if (!r.bytes(m.client_public_key.data(), m.client_public_key.size()) || !r.u64(m.nonce) || !r.name(m.client_name) ||
         !r.bytes(m.proof.data(), m.proof.size())) {
       return std::nullopt;
     }
@@ -469,7 +609,7 @@ namespace couchlink::link {
   std::optional<Hello> decode_hello(const std::vector<std::uint8_t> &payload) {
     Reader r(payload.data(), payload.size());
     Hello m;
-    if (!r.u64(m.client_nonce) || !r.name(m.client_name)) {
+    if (!r.u64(m.client_nonce) || !r.name(m.client_name) || !r.text(m.software_version, kMaxSoftwareVersionLength)) {
       return std::nullopt;
     }
     return finish(r, m);

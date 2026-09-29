@@ -367,6 +367,12 @@ namespace {
     const auto datagram = seal(header, payload, &key);
     CHECK(datagram.size() == kHeaderSize + payload.size() + kTagSize);
     CHECK(datagram[0] == 'C' && datagram[1] == 'L' && datagram[2] == 'K' && datagram[3] == '1');
+    // The payload is encrypted: the report bytes don't appear on the wire.
+    CHECK(!std::equal(payload.begin(), payload.end(), datagram.begin() + kHeaderSize));
+    // The header is authenticated too: a changed counter is rejected.
+    auto moved = datagram;
+    moved[12] ^= 0x01;
+    CHECK(!open(moved.data(), moved.size(), &key).has_value());
 
     const auto opened = open(datagram.data(), datagram.size(), &key);
     CHECK(opened.has_value());
@@ -404,9 +410,20 @@ namespace {
     auto bad_magic = datagram;
     bad_magic[0] = 'X';
     CHECK(!peek(bad_magic.data(), bad_magic.size()).has_value());
-    auto bad_version = datagram;
-    bad_version[4] = 9;
-    CHECK(!peek(bad_version.data(), bad_version.size()).has_value());
+    // Probes from any version are readable, so the host can answer them...
+    auto future_probe = datagram;
+    future_probe[4] = 9;
+    CHECK(peek(future_probe.data(), future_probe.size()).has_value());
+    CHECK(wire_version(future_probe.data(), future_probe.size()) == 9);
+    // ...but other types must match this version exactly.
+    Header hello;
+    hello.type = Type::kHello;
+    const auto key = test_key(1);
+    auto other_hello = seal(hello, encode(Hello {1, "iPad", "0.2.0"}), &key);
+    CHECK(peek(other_hello.data(), other_hello.size()).has_value());
+    other_hello[4] = 1;
+    CHECK(!peek(other_hello.data(), other_hello.size()).has_value());
+    CHECK(wire_version(other_hello.data(), other_hello.size()) == 1);
     auto bad_type = datagram;
     bad_type[5] = 0x7F;
     CHECK(!peek(bad_type.data(), bad_type.size()).has_value());
@@ -418,9 +435,16 @@ namespace {
   void test_link_messages_roundtrip() {
     using namespace couchlink::link;
 
-    ProbeReply reply {5, true, std::string(40, 'x')};
+    ProbeReply reply;
+    reply.nonce = 5;
+    reply.pairing_open = true;
+    reply.host_name = std::string(40, 'x');
+    reply.software_version = "0.2.0";
+    reply.pairing_public_key = test_key(9);
     auto reply2 = decode_probe_reply(encode(reply));
     CHECK(reply2 && reply2->pairing_open && reply2->host_name.size() == kMaxNameLength);
+    CHECK(reply2 && reply2->min_version == kMinVersion && reply2->max_version == kVersion);
+    CHECK(reply2 && reply2->software_version == "0.2.0" && reply2->pairing_public_key == test_key(9));
 
     InputBundle bundle;
     bundle.controller = 1;
@@ -439,17 +463,16 @@ namespace {
     CHECK(key_kind(Type::kPairStart) == KeyKind::kNone);
 
     PairRequest pair;
-    pair.key = test_key(3);
+    pair.client_public_key = test_key(3);
     pair.nonce = 99;
     pair.client_name = "Living room iPad";
-    pair.proof = pairing_proof("123456", 7, pair.key, 99);
+    pair.proof[0] = 0xAB;
     const auto pair2 = decode_pair_request(encode(pair));
-    CHECK(pair2 && pair2->key == pair.key && pair2->client_name == pair.client_name && pair2->proof == pair.proof);
-    CHECK(pairing_proof("123456", 7, pair.key, 99) != pairing_proof("123457", 7, pair.key, 99));
-    CHECK(pairing_proof("123456", 7, pair.key, 99) != pairing_proof("123456", 8, pair.key, 99));
+    CHECK(pair2 && pair2->client_public_key == pair.client_public_key && pair2->client_name == pair.client_name && pair2->proof == pair.proof);
 
     CHECK(decode_pair_result(encode(PairResult {true}))->accepted);
-    CHECK(decode_hello(encode(Hello {1, "iPad"}))->client_name == "iPad");
+    const auto hello = decode_hello(encode(Hello {1, "iPad", "0.2.0"}));
+    CHECK(hello && hello->client_name == "iPad" && hello->software_version == "0.2.0");
     const auto ack = decode_hello_ack(encode(HelloAck {1, 2, kHostCapSteamController2026}));
     CHECK(ack && ack->host_nonce == 2 && ack->capabilities == kHostCapSteamController2026);
 
@@ -489,11 +512,29 @@ namespace {
   void test_link_keys_and_replay() {
     using namespace couchlink::link;
     const auto key = test_key(0x42);
-    const auto s1 = derive_session_key(key, 1, 2);
-    CHECK(s1 == derive_session_key(key, 1, 2));
-    CHECK(s1 != derive_session_key(key, 1, 3));
-    CHECK(s1 != derive_session_key(test_key(0x43), 1, 2));
-    CHECK(s1 != key);
+    const auto s1 = derive_session_keys(key, 1, 2);
+    CHECK(s1.client_to_host == derive_session_keys(key, 1, 2).client_to_host);
+    CHECK(s1.client_to_host != s1.host_to_client);  // one key per direction
+    CHECK(s1.client_to_host != derive_session_keys(key, 1, 3).client_to_host);
+    CHECK(s1.client_to_host != derive_session_keys(test_key(0x43), 1, 2).client_to_host);
+    CHECK(s1.client_to_host != key);
+
+    // Pairing: both sides derive the same keys from their own secret and the
+    // other's public key; the code changes the pairing key, not the result key.
+    const auto client_secret = test_key(0x11);
+    const auto host_secret = test_key(0x22);
+    const auto client_public = couchlink::crypto::x25519_public_key(client_secret);
+    const auto host_public = couchlink::crypto::x25519_public_key(host_secret);
+    const auto on_client = derive_pairing_keys(client_secret, host_public, 7, client_public, host_public, 99, "123456");
+    const auto on_host = derive_pairing_keys(host_secret, client_public, 7, client_public, host_public, 99, "123456");
+    CHECK(on_client && on_host);
+    CHECK(on_client->pairing_key == on_host->pairing_key && on_client->proof == on_host->proof && on_client->result_key == on_host->result_key);
+    const auto wrong_code = derive_pairing_keys(host_secret, client_public, 7, client_public, host_public, 99, "123457");
+    CHECK(wrong_code && wrong_code->proof != on_client->proof && wrong_code->pairing_key != on_client->pairing_key);
+    CHECK(wrong_code->result_key == on_client->result_key);
+    const auto other_id = derive_pairing_keys(host_secret, client_public, 8, client_public, host_public, 99, "123456");
+    CHECK(other_id && other_id->proof != on_client->proof);
+    CHECK(!derive_pairing_keys(host_secret, Key {}, 7, Key {}, host_public, 99, "123456").has_value());
 
     const auto hex_key = to_hex(key.data(), key.size());
     CHECK(key_from_hex(hex_key) == key);

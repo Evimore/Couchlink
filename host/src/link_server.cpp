@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "couchlink/link_client.h"
+#include "couchlink/sha256.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -84,10 +85,51 @@ namespace couchlink {
     parked_.clear();
   }
 
+  LinkServer::PairingWindow LinkServer::new_pairing_window(
+    const std::string &pin, Clock::duration length, std::function<void(const PairingOutcome &)> on_done, bool remote
+  ) {
+    PairingWindow window;
+    window.pin = pin;
+    window.deadline = Clock::now() + length;
+    window.on_done = std::move(on_done);
+    window.remote = remote;
+    random_bytes(window.secret.data(), window.secret.size());
+    window.public_key = crypto::x25519_public_key(window.secret);
+    return window;
+  }
+
   void LinkServer::open_pairing(const std::string &pin, std::chrono::seconds window, std::function<void(const PairingOutcome &)> on_done) {
     std::lock_guard lock(mutex_);
-    pairing_ = PairingWindow {pin, Clock::now() + window, 0, std::move(on_done)};
+    pairing_ = new_pairing_window(pin, window, std::move(on_done), false);
     log::info("link: pairing open for ", window.count(), " s");
+  }
+
+  ProbeReply LinkServer::probe_reply(std::uint64_t nonce) const {
+    ProbeReply reply;
+    reply.nonce = nonce;
+    reply.pairing_open = pairing_.has_value();
+    reply.host_name = options_.host_name;
+    reply.min_version = kMinVersion;
+    reply.max_version = kVersion;
+    reply.software_version = options_.software_version;
+    if (pairing_) {
+      reply.pairing_public_key = pairing_->public_key;
+    }
+    return reply;
+  }
+
+  void LinkServer::warn_version(std::uint8_t version, const net::Endpoint &from) {
+    const auto now = Clock::now();
+    auto &last = version_warned_[from.to_string()];
+    if (last != Clock::time_point {} && now - last < std::chrono::minutes(1)) {
+      return;
+    }
+    last = now;
+    if (version < kMinVersion) {
+      log::warn("link: an older Couchlink app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update the app");
+    } else {
+      log::warn("link: a newer Couchlink app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update Couchlink on this PC");
+    }
   }
 
   bool LinkServer::pairing_open() const {
@@ -133,6 +175,10 @@ namespace couchlink {
     const auto header = peek(data, length);
     if (!header) {
       ++counters_.rejected_datagrams;
+      const auto version = wire_version(data, length);
+      if (version && *version != kVersion) {
+        warn_version(*version, from);
+      }
       return;
     }
 
@@ -164,17 +210,17 @@ namespace couchlink {
   }
 
   void LinkServer::handle_probe(const Datagram &datagram, const net::Endpoint &from) {
+    // Any version's Probe gets an answer, so the client can say which side to update.
     const auto probe = decode_probe(datagram.payload);
     if (!probe) {
       return;
     }
-    ProbeReply reply;
-    reply.nonce = probe->nonce;
-    reply.pairing_open = pairing_.has_value();
-    reply.host_name = options_.host_name;
+    if (datagram.header.version != kVersion) {
+      warn_version(datagram.header.version, from);
+    }
     Header header;
     header.type = Type::kProbeReply;
-    send_raw(seal(header, encode(reply), nullptr), from);
+    send_raw(seal(header, encode(probe_reply(probe->nonce)), nullptr), from);
   }
 
   void LinkServer::handle_pair_start(const Datagram &datagram, const net::Endpoint &from, Deferred &deferred) {
@@ -186,7 +232,7 @@ namespace couchlink {
     if (!pairing_ && options_.remote_pairing && now >= remote_pairing_blocked_until_) {
       const auto code = ClientSession::new_pin(random_bytes);
       const auto name = start->client_name.empty() ? std::string("A device") : start->client_name;
-      pairing_ = PairingWindow {code, now + options_.pairing_window, 0, nullptr, true};
+      pairing_ = new_pairing_window(code, options_.pairing_window, nullptr, true);
       log::info("link: '", name, "' at ", from.to_string(), " asked to pair; showing a code for ", options_.pairing_window.count(), " s");
       if (options_.show_code) {
         deferred.push_back([show = options_.show_code, name, code] {
@@ -195,13 +241,9 @@ namespace couchlink {
       }
     }
 
-    ProbeReply reply;
-    reply.nonce = start->nonce;
-    reply.pairing_open = pairing_.has_value();
-    reply.host_name = options_.host_name;
     Header header;
     header.type = Type::kProbeReply;
-    send_raw(seal(header, encode(reply), nullptr), from);
+    send_raw(seal(header, encode(probe_reply(start->nonce)), nullptr), from);
   }
 
   void LinkServer::handle_pair_request(const Datagram &datagram, const net::Endpoint &from, Deferred &deferred) {
@@ -211,28 +253,34 @@ namespace couchlink {
       return;
     }
 
-    auto reply_with = [&](bool accepted) {
+    auto reply_with = [&](bool accepted, const Key &result_key) {
       Header header;
       header.type = Type::kPairResult;
       header.client_id = client_id;
-      send_raw(seal(header, encode(PairResult {accepted}), &request->key), from);
+      send_raw(seal(header, encode(PairResult {accepted}), &result_key), from);
     };
 
     const auto now = Clock::now();
     // The client retransmits until it hears back; repeat a success it may have missed.
-    if (recent_pairing_ && now < recent_pairing_->until && recent_pairing_->client_id == client_id && recent_pairing_->key == request->key) {
-      reply_with(true);
+    if (recent_pairing_ && now < recent_pairing_->until && recent_pairing_->client_id == client_id &&
+        recent_pairing_->client_public_key == request->client_public_key) {
+      reply_with(true, recent_pairing_->result_key);
       return;
     }
     if (!pairing_ || now >= pairing_->deadline) {
       return;  // not pairing: stay silent
     }
 
-    const auto expected = pairing_proof(pairing_->pin, client_id, request->key, request->nonce);
-    if (expected != request->proof) {
+    const auto keys = derive_pairing_keys(
+      pairing_->secret, request->client_public_key, client_id, request->client_public_key, pairing_->public_key, request->nonce, pairing_->pin
+    );
+    if (!keys) {
+      return;  // invalid key: not a real client
+    }
+    if (!constant_time_equal(keys->proof.data(), request->proof.data(), keys->proof.size())) {
       ++pairing_->failures;
       log::warn("link: pairing attempt from ", from.to_string(), " used the wrong code (", pairing_->failures, "/", kMaxPairingFailures, ")");
-      reply_with(false);
+      reply_with(false, keys->result_key);
       if (pairing_->failures >= kMaxPairingFailures) {
         if (pairing_->remote) {
           remote_pairing_blocked_until_ = now + kRemotePairingCooldown;
@@ -250,7 +298,7 @@ namespace couchlink {
 
     PairedClient client;
     client.client_id = client_id;
-    client.key = request->key;
+    client.key = keys->pairing_key;
     client.name = request->client_name.empty() ? "client-" + hex_id(client_id) : request->client_name;
     store_.upsert(client);
     const bool saved = store_.save();
@@ -258,8 +306,8 @@ namespace couchlink {
       log::error("link: paired with '", client.name, "' but could not save ", store_.path());
     }
 
-    reply_with(true);
-    recent_pairing_ = RecentPairing {client_id, request->key, now + kRecentPairingGrace};
+    reply_with(true, keys->result_key);
+    recent_pairing_ = RecentPairing {client_id, request->client_public_key, keys->result_key, now + kRecentPairingGrace};
     log::info("link: paired with '", client.name, "' (", hex_id(client_id), ")");
 
     auto done = std::move(pairing_->on_done);
@@ -303,7 +351,7 @@ namespace couchlink {
 
     Session session;
     session.client = *client;
-    session.session_key = derive_session_key(client->key, hello->client_nonce, ack.host_nonce);
+    session.keys = derive_session_keys(client->key, hello->client_nonce, ack.host_nonce);
     session.endpoint = from;
     session.last_rx = Clock::now();
     sessions_.emplace(client->client_id, std::move(session));
@@ -313,7 +361,8 @@ namespace couchlink {
     reply.client_id = client->client_id;
     reply.counter = datagram->header.counter;
     send_raw(seal(reply, encode(ack), &client->key), from);
-    log::info("link: '", client->name, "' connected from ", from.to_string());
+    log::info("link: '", client->name, "' connected from ", from.to_string(),
+              hello->software_version.empty() ? std::string() : " (Couchlink " + hello->software_version + ")");
   }
 
   void LinkServer::handle_session(const std::uint8_t *data, std::size_t length, const net::Endpoint &from) {
@@ -324,7 +373,7 @@ namespace couchlink {
       return;
     }
     auto &session = it->second;
-    const auto datagram = open(data, length, &session.session_key);
+    const auto datagram = open(data, length, &session.keys.client_to_host);
     if (!datagram || !session.rx_guard.accept(datagram->header.counter)) {
       ++counters_.rejected_datagrams;
       return;
@@ -582,7 +631,7 @@ namespace couchlink {
     header.type = type;
     header.client_id = session.client.client_id;
     header.counter = ++session.tx_counter;
-    send_raw(seal(header, payload, &session.session_key), session.endpoint);
+    send_raw(seal(header, payload, &session.keys.host_to_client), session.endpoint);
   }
 
   void LinkServer::on_output(const std::shared_ptr<Route> &route, OutputKind kind, const std::vector<std::uint8_t> &report) {

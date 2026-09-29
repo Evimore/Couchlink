@@ -34,6 +34,8 @@ namespace couchlink {
       std::string bind_address = "::";
       std::uint16_t port = link::kDefaultPort;
       std::string host_name = "couchlink-host";
+      /** couchlink-host's version, told to clients so they can say which side to update. */
+      std::string software_version;
       std::chrono::milliseconds session_timeout {3000};
       std::size_t max_controllers_per_session = 4;
 
@@ -122,7 +124,7 @@ namespace couchlink {
 
     struct Session {
       PairedClient client;
-      link::Key session_key {};
+      link::SessionKeys keys;
       net::Endpoint endpoint;
       std::uint64_t tx_counter = 0;
       link::ReplayGuard rx_guard;
@@ -146,13 +148,21 @@ namespace couchlink {
       int failures = 0;
       std::function<void(const PairingOutcome &)> on_done;
       bool remote = false;  ///< opened by a client's PairStart
+      link::Key secret {};  ///< temporary X25519 key for this window only
+      link::Key public_key {};
     };
 
     struct RecentPairing {
       std::uint32_t client_id = 0;
-      link::Key key {};
+      link::Key client_public_key {};
+      link::Key result_key {};
       Clock::time_point until;
     };
+
+    PairingWindow new_pairing_window(const std::string &pin, Clock::duration length, std::function<void(const PairingOutcome &)> on_done, bool remote);
+    link::ProbeReply probe_reply(std::uint64_t nonce) const;
+    void warn_version(std::uint8_t version, const net::Endpoint &from);
+    std::map<std::string, Clock::time_point> version_warned_;
 
     using Deferred = std::vector<std::function<void()>>;
 

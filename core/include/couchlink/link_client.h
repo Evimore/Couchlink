@@ -26,27 +26,49 @@ namespace couchlink::link {
 
   class ClientSession {
   public:
-    ClientSession(Pairing pairing, std::string client_name, RandomSource random);
+    ClientSession(Pairing pairing, std::string client_name, RandomSource random, std::string software_version = {});
 
     // ---- Discovery and pairing (static: no session needed) -------------------
 
     static std::vector<std::uint8_t> make_probe(std::uint64_t nonce);
+    /**
+     * Accepts a ProbeReply from a host of any protocol version, so the client
+     * can tell the user to update one side (see check_compatibility).
+     */
     static std::optional<ProbeReply> parse_probe_reply(const std::uint8_t *data, std::size_t length, std::uint64_t expected_nonce);
-
-    /** Generate a new pairing (random client ID and key). */
-    static Pairing new_pairing(const RandomSource &random);
 
     /** Generate a random 6-digit pairing code (the host shows it, the user types it on the client). */
     static std::string new_pin(const RandomSource &random);
 
-    /** Ask the host to open pairing and show a code; it answers with a ProbeReply. */
-    static std::vector<std::uint8_t> make_pair_start(std::uint64_t nonce, const std::string &client_name);
+    /** One pairing attempt: the client's temporary key pair and, once the code is entered, the keys. */
+    struct PairingAttempt {
+      std::uint32_t client_id = 0;
+      std::uint64_t nonce = 0;
+      Key secret {};  ///< temporary X25519 secret, used for this attempt only
+      Key public_key {};
+      bool keys_ready = false;
+      PairingKeys keys;
+      Pairing pairing() const {
+        return Pairing {client_id, keys.pairing_key};
+      }
+    };
 
-    static std::vector<std::uint8_t> make_pair_request(const Pairing &pairing, const std::string &pin,
-                                                       const std::string &client_name, std::uint64_t nonce);
+    static PairingAttempt begin_pairing(const RandomSource &random);
+
+    /** Ask the host to open pairing and show a code; it answers with a ProbeReply carrying its key. */
+    static std::vector<std::uint8_t> make_pair_start(const PairingAttempt &attempt, const std::string &client_name);
+
+    /**
+     * Combine the host's temporary key (from its ProbeReply) with the code the user typed.
+     * @return false if the host's key is invalid.
+     */
+    static bool enter_pin(PairingAttempt &attempt, const Key &host_public_key, const std::string &pin);
+
+    /** Requires enter_pin() first. */
+    static std::vector<std::uint8_t> make_pair_request(const PairingAttempt &attempt, const std::string &client_name);
 
     /** @return true/false for an authentic PairResult, nullopt for anything else. */
-    static std::optional<bool> parse_pair_result(const std::uint8_t *data, std::size_t length, const Pairing &pairing);
+    static std::optional<bool> parse_pair_result(const std::uint8_t *data, std::size_t length, const PairingAttempt &attempt);
 
     // ---- Session ------------------------------------------------------------
 
@@ -99,11 +121,12 @@ namespace couchlink::link {
     Pairing pairing_;
     std::string client_name_;
     RandomSource random_;
+    std::string software_version_;
 
     bool established_ = false;
     std::uint64_t client_nonce_ = 0;
     std::uint32_t capabilities_ = 0;
-    Key session_key_ {};
+    SessionKeys session_keys_;
     std::uint64_t tx_counter_ = 0;
     ReplayGuard rx_guard_;
   };

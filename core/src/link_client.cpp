@@ -14,10 +14,11 @@ namespace couchlink::link {
     }
   }  // namespace
 
-  ClientSession::ClientSession(Pairing pairing, std::string client_name, RandomSource random):
+  ClientSession::ClientSession(Pairing pairing, std::string client_name, RandomSource random, std::string software_version):
       pairing_(pairing),
       client_name_(std::move(client_name)),
-      random_(std::move(random)) {}
+      random_(std::move(random)),
+      software_version_(std::move(software_version)) {}
 
   std::vector<std::uint8_t> ClientSession::make_probe(std::uint64_t nonce) {
     Header header;
@@ -30,29 +31,42 @@ namespace couchlink::link {
     if (!datagram || datagram->header.type != Type::kProbeReply) {
       return std::nullopt;
     }
-    auto reply = decode_probe_reply(datagram->payload);
+    auto reply = decode_probe_reply(datagram->payload, datagram->header.version);
     if (!reply || reply->nonce != expected_nonce) {
       return std::nullopt;
     }
     return reply;
   }
 
-  std::vector<std::uint8_t> ClientSession::make_pair_start(std::uint64_t nonce, const std::string &client_name) {
+  std::vector<std::uint8_t> ClientSession::make_pair_start(const PairingAttempt &attempt, const std::string &client_name) {
     Header header;
     header.type = Type::kPairStart;
-    return seal(header, encode(PairStart {nonce, client_name}), nullptr);
+    return seal(header, encode(PairStart {attempt.nonce, client_name}), nullptr);
   }
 
-  Pairing ClientSession::new_pairing(const RandomSource &random) {
-    Pairing pairing;
+  ClientSession::PairingAttempt ClientSession::begin_pairing(const RandomSource &random) {
+    PairingAttempt attempt;
     std::uint8_t id[4];
     do {
       random(id, sizeof(id));
-      pairing.client_id = (static_cast<std::uint32_t>(id[0]) << 24) | (static_cast<std::uint32_t>(id[1]) << 16) |
+      attempt.client_id = (static_cast<std::uint32_t>(id[0]) << 24) | (static_cast<std::uint32_t>(id[1]) << 16) |
                           (static_cast<std::uint32_t>(id[2]) << 8) | id[3];
-    } while (pairing.client_id == 0);
-    random(pairing.key.data(), pairing.key.size());
-    return pairing;
+    } while (attempt.client_id == 0);
+    attempt.nonce = random_u64(random);
+    random(attempt.secret.data(), attempt.secret.size());
+    attempt.public_key = crypto::x25519_public_key(attempt.secret);
+    return attempt;
+  }
+
+  bool ClientSession::enter_pin(PairingAttempt &attempt, const Key &host_public_key, const std::string &pin) {
+    const auto keys = derive_pairing_keys(
+      attempt.secret, host_public_key, attempt.client_id, attempt.public_key, host_public_key, attempt.nonce, pin
+    );
+    attempt.keys_ready = keys.has_value();
+    if (keys) {
+      attempt.keys = *keys;
+    }
+    return attempt.keys_ready;
   }
 
   std::string ClientSession::new_pin(const RandomSource &random) {
@@ -67,23 +81,28 @@ namespace couchlink::link {
     return pin;
   }
 
-  std::vector<std::uint8_t> ClientSession::make_pair_request(const Pairing &pairing, const std::string &pin,
-                                                              const std::string &client_name, std::uint64_t nonce) {
+  std::vector<std::uint8_t> ClientSession::make_pair_request(const PairingAttempt &attempt, const std::string &client_name) {
+    if (!attempt.keys_ready) {
+      return {};
+    }
     PairRequest request;
-    request.key = pairing.key;
-    request.nonce = nonce;
+    request.client_public_key = attempt.public_key;
+    request.nonce = attempt.nonce;
     request.client_name = client_name;
-    request.proof = pairing_proof(pin, pairing.client_id, pairing.key, nonce);
+    request.proof = attempt.keys.proof;
 
     Header header;
     header.type = Type::kPairRequest;
-    header.client_id = pairing.client_id;
+    header.client_id = attempt.client_id;
     return seal(header, encode(request), nullptr);
   }
 
-  std::optional<bool> ClientSession::parse_pair_result(const std::uint8_t *data, std::size_t length, const Pairing &pairing) {
-    const auto datagram = open(data, length, &pairing.key);
-    if (!datagram || datagram->header.type != Type::kPairResult || datagram->header.client_id != pairing.client_id) {
+  std::optional<bool> ClientSession::parse_pair_result(const std::uint8_t *data, std::size_t length, const PairingAttempt &attempt) {
+    if (!attempt.keys_ready) {
+      return std::nullopt;
+    }
+    const auto datagram = open(data, length, &attempt.keys.result_key);
+    if (!datagram || datagram->header.type != Type::kPairResult || datagram->header.client_id != attempt.client_id) {
       return std::nullopt;
     }
     const auto result = decode_pair_result(datagram->payload);
@@ -101,7 +120,7 @@ namespace couchlink::link {
     header.type = Type::kHello;
     header.client_id = pairing_.client_id;
     header.counter = now_us;
-    return seal(header, encode(Hello {client_nonce_, client_name_}), &pairing_.key);
+    return seal(header, encode(Hello {client_nonce_, client_name_, software_version_}), &pairing_.key);
   }
 
   std::vector<std::uint8_t> ClientSession::seal_session(Type type, const std::vector<std::uint8_t> &payload) {
@@ -112,7 +131,7 @@ namespace couchlink::link {
     header.type = type;
     header.client_id = pairing_.client_id;
     header.counter = ++tx_counter_;
-    return seal(header, payload, &session_key_);
+    return seal(header, payload, &session_keys_.client_to_host);
   }
 
   std::vector<std::uint8_t> ClientSession::make_attach(const Attach &attach) {
@@ -171,7 +190,7 @@ namespace couchlink::link {
       if (!ack || ack->client_nonce != client_nonce_) {
         return std::nullopt;  // stale or replayed ack
       }
-      session_key_ = derive_session_key(pairing_.key, client_nonce_, ack->host_nonce);
+      session_keys_ = derive_session_keys(pairing_.key, client_nonce_, ack->host_nonce);
       capabilities_ = ack->capabilities;
       tx_counter_ = 0;
       rx_guard_.reset();
@@ -182,7 +201,7 @@ namespace couchlink::link {
     if (!established_ || key_kind(header->type) != KeyKind::kSession) {
       return std::nullopt;
     }
-    const auto datagram = open(data, length, &session_key_);
+    const auto datagram = open(data, length, &session_keys_.host_to_client);
     if (!datagram || !rx_guard_.accept(datagram->header.counter)) {
       return std::nullopt;
     }

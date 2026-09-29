@@ -75,6 +75,7 @@ namespace couchlink {
 
     std::string line;
     int line_number = 0;
+    int old_pairings = 0;
     while (std::getline(file, line)) {
       ++line_number;
       if (line.empty() || line[0] == '#') {
@@ -86,11 +87,18 @@ namespace couchlink {
       std::string name;
       std::getline(stream >> std::ws, name);
 
+      // Pairings from before protocol version 2 sent their key over the
+      // network once; those devices pair again with the safer exchange.
+      if (keyword == "client") {
+        ++old_pairings;
+        continue;
+      }
+
       PairedClient client;
       const auto key = link::key_from_hex(key_hex);
       char *end = nullptr;
       const auto id = std::strtoul(id_hex.c_str(), &end, 16);
-      if (keyword != "client" || id_hex.size() != 8 || end == nullptr || *end != '\0' || id == 0 || !key) {
+      if (keyword != "client2" || id_hex.size() != 8 || end == nullptr || *end != '\0' || id == 0 || !key) {
         log::warn("config: ignoring malformed line ", line_number, " in ", path_);
         continue;
       }
@@ -98,6 +106,9 @@ namespace couchlink {
       client.key = *key;
       client.name = sanitize_name(name);
       clients_.push_back(client);
+    }
+    if (old_pairings > 0) {
+      log::info("config: ", old_pairings, " device(s) paired with an older version must pair again (pairing is safer now)");
     }
     return true;
   }
@@ -125,7 +136,7 @@ namespace couchlink {
       for (const auto &client : clients_) {
         char id[9];
         std::snprintf(id, sizeof(id), "%08x", client.client_id);
-        file << "client " << id << ' ' << link::to_hex(client.key.data(), client.key.size()) << ' ' << client.name << '\n';
+        file << "client2 " << id << ' ' << link::to_hex(client.key.data(), client.key.size()) << ' ' << client.name << '\n';
       }
       if (!file) {
         return false;

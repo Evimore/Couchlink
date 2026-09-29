@@ -10,6 +10,7 @@
 #include "couchlink/link_client.h"
 #include "couchlink/test_pattern.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -23,6 +24,12 @@ using namespace couchlink;
 using namespace std::chrono_literals;
 
 namespace {
+
+  couchlink::link::Key test_secret(std::uint8_t seed) {
+    couchlink::link::Key key {};
+    key.fill(seed);
+    return key;
+  }
 
   void random_fill(std::uint8_t *out, std::size_t length) {
     std::random_device device;
@@ -187,6 +194,7 @@ namespace {
       options.bind_address = "127.0.0.1";
       options.port = 0;
       options.host_name = "Test PC";
+      options.software_version = "test";
       options.session_timeout = timeout;
       options.remote_pairing = remote_pairing;
       options.reconnect_grace = grace;
@@ -204,15 +212,26 @@ namespace {
       server.open_pairing(pin, 10s, [&outcome](const LinkServer::PairingOutcome &result) {
         outcome = result.success ? 1 : 0;
       });
-      const auto pairing = link::ClientSession::new_pairing(random_fill);
-      client.send(link::ClientSession::make_pair_request(pairing, pin, "Test iPad", 1));
+      auto attempt = attempt_with_code(client, pin);
+      client.send(link::ClientSession::make_pair_request(attempt, "Test iPad"));
       const auto reply = client.receive();
-      const auto accepted = link::ClientSession::parse_pair_result(reply.data(), reply.size(), pairing);
+      const auto accepted = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
       CHECK(accepted.has_value() && *accepted);
       CHECK(eventually([&] {
         return outcome.load() == 1;
       }));
-      return pairing;
+      return attempt.pairing();
+    }
+
+    /** Get the host's temporary pairing key with a probe, then enter @p pin. */
+    link::ClientSession::PairingAttempt attempt_with_code(TestClient &client, const std::string &pin) {
+      auto attempt = link::ClientSession::begin_pairing(random_fill);
+      client.send(link::ClientSession::make_probe(attempt.nonce));
+      const auto reply = client.receive();
+      const auto probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), attempt.nonce);
+      CHECK(probe && probe->pairing_open);
+      CHECK(probe && link::ClientSession::enter_pin(attempt, probe->pairing_public_key, pin));
+      return attempt;
     }
 
     bool connect(TestClient &client, link::ClientSession &session) {
@@ -230,9 +249,11 @@ namespace {
     auto probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), 99);
     CHECK(probe && probe->host_name == "Test PC" && !probe->pairing_open);
 
-    // Not pairing: requests are ignored silently.
-    const auto stranger = link::ClientSession::new_pairing(random_fill);
-    client.send(link::ClientSession::make_pair_request(stranger, "111111", "x", 1));
+    // Not pairing: the reply carries no pairing key, and requests are ignored silently.
+    CHECK(probe && probe->pairing_public_key == link::Key {});
+    auto stranger = link::ClientSession::begin_pairing(random_fill);
+    CHECK(link::ClientSession::enter_pin(stranger, couchlink::crypto::x25519_public_key(test_secret(1)), "111111"));
+    client.send(link::ClientSession::make_pair_request(stranger, "x"));
     CHECK(client.receive(200).empty());
 
     std::atomic<int> outcome {-1};
@@ -248,18 +269,27 @@ namespace {
     probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), 5);
     CHECK(probe && probe->pairing_open);
 
+    CHECK(probe && probe->pairing_public_key != link::Key {});
+    const auto host_key = probe->pairing_public_key;
+
     // Wrong code: authentic rejection, window stays open.
-    const auto pairing = link::ClientSession::new_pairing(random_fill);
-    client.send(link::ClientSession::make_pair_request(pairing, "654321", "Living room iPad", 7));
+    auto attempt = link::ClientSession::begin_pairing(random_fill);
+    CHECK(link::ClientSession::enter_pin(attempt, host_key, "654321"));
+    client.send(link::ClientSession::make_pair_request(attempt, "Living room iPad"));
     reply = client.receive();
-    auto result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), pairing);
+    auto result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
     CHECK(result.has_value() && !*result);
     CHECK(f.server.pairing_open());
 
+    // The request never contains the pairing key: it is derived on both sides.
+    const auto request = link::ClientSession::make_pair_request(attempt, "Living room iPad");
+    CHECK(std::search(request.begin(), request.end(), attempt.keys.pairing_key.begin(), attempt.keys.pairing_key.end()) == request.end());
+
     // Right code.
-    client.send(link::ClientSession::make_pair_request(pairing, "123456", "Living room iPad", 8));
+    CHECK(link::ClientSession::enter_pin(attempt, host_key, "123456"));
+    client.send(link::ClientSession::make_pair_request(attempt, "Living room iPad"));
     reply = client.receive();
-    result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), pairing);
+    result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
     CHECK(result.has_value() && *result);
     CHECK(eventually([&] {
       return outcome.load() == 1;
@@ -271,16 +301,16 @@ namespace {
     CHECK(!f.server.pairing_open());
 
     // A retransmitted request after success is answered again.
-    client.send(link::ClientSession::make_pair_request(pairing, "123456", "Living room iPad", 8));
+    client.send(link::ClientSession::make_pair_request(attempt, "Living room iPad"));
     reply = client.receive();
-    result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), pairing);
+    result = link::ClientSession::parse_pair_result(reply.data(), reply.size(), attempt);
     CHECK(result.has_value() && *result);
 
-    // Persisted.
+    // Persisted, and the stored key is the one the client derived.
     ClientStore reloaded(f.config);
     reloaded.load();
-    const auto stored = reloaded.find(pairing.client_id);
-    CHECK(stored && stored->key == pairing.key && stored->name == "Living room iPad");
+    const auto stored = reloaded.find(attempt.client_id);
+    CHECK(stored && stored->key == attempt.pairing().key && stored->name == "Living room iPad");
   }
 
   void test_pairing_lockout() {
@@ -290,23 +320,23 @@ namespace {
     f.server.open_pairing("000000", 10s, [&](const LinkServer::PairingOutcome &result) {
       outcome = result.success ? 1 : 0;
     });
-    const auto pairing = link::ClientSession::new_pairing(random_fill);
+    auto attempt = f.attempt_with_code(client, "999999");
     for (int i = 0; i < LinkServer::kMaxPairingFailures; ++i) {
-      client.send(link::ClientSession::make_pair_request(pairing, "999999", "guesser", static_cast<std::uint64_t>(i)));
+      client.send(link::ClientSession::make_pair_request(attempt, "guesser"));
       client.receive();
     }
     CHECK(eventually([&] {
       return outcome.load() == 0;
     }));
     CHECK(!f.server.pairing_open());
-    client.send(link::ClientSession::make_pair_request(pairing, "000000", "guesser", 100));
+    client.send(link::ClientSession::make_pair_request(attempt, "guesser"));
     CHECK(client.receive(200).empty());
   }
 
-  std::optional<link::ProbeReply> pair_start(TestClient &client, std::uint64_t nonce, const std::string &name) {
-    client.send(link::ClientSession::make_pair_start(nonce, name));
+  std::optional<link::ProbeReply> pair_start(TestClient &client, link::ClientSession::PairingAttempt &attempt, const std::string &name) {
+    client.send(link::ClientSession::make_pair_start(attempt, name));
     const auto reply = client.receive();
-    return link::ClientSession::parse_probe_reply(reply.data(), reply.size(), nonce);
+    return link::ClientSession::parse_probe_reply(reply.data(), reply.size(), attempt.nonce);
   }
 
   void test_remote_pairing() {
@@ -314,7 +344,8 @@ namespace {
     TestClient client(f.server.port());
 
     // An unpaired client asks; the host picks a code and puts it on screen.
-    auto reply = pair_start(client, 5, "Couch iPad");
+    auto attempt = link::ClientSession::begin_pairing(random_fill);
+    auto reply = pair_start(client, attempt, "Couch iPad");
     CHECK(reply && reply->pairing_open && reply->host_name == "Test PC");
     CHECK(eventually([&] {
       return f.shown() == 1;
@@ -328,34 +359,38 @@ namespace {
     CHECK(code.size() == link::kPinDigits && code.find_first_not_of("0123456789") == std::string::npos);
 
     // Asking again while the window is open shows nothing new.
-    reply = pair_start(client, 6, "Couch iPad");
-    CHECK(reply && reply->pairing_open);
+    auto again = link::ClientSession::begin_pairing(random_fill);
+    const auto host_key = reply ? reply->pairing_public_key : link::Key {};
+    reply = pair_start(client, again, "Couch iPad");
+    CHECK(reply && reply->pairing_open && reply->pairing_public_key == host_key);
     std::this_thread::sleep_for(50ms);
     CHECK(f.shown() == 1);
 
     // Typing the code on the client pairs it.
-    const auto pairing = link::ClientSession::new_pairing(random_fill);
-    client.send(link::ClientSession::make_pair_request(pairing, code, "Couch iPad", 1));
+    CHECK(link::ClientSession::enter_pin(attempt, host_key, code));
+    client.send(link::ClientSession::make_pair_request(attempt, "Couch iPad"));
     auto answer = client.receive();
-    auto accepted = link::ClientSession::parse_pair_result(answer.data(), answer.size(), pairing);
+    auto accepted = link::ClientSession::parse_pair_result(answer.data(), answer.size(), attempt);
     CHECK(accepted && *accepted);
     CHECK(eventually([&] {
       return !f.server.pairing_open();
     }));
 
     // Too many wrong codes close the window and ignore requests for a while.
-    reply = pair_start(client, 7, "Stranger");
+    auto guesser = link::ClientSession::begin_pairing(random_fill);
+    reply = pair_start(client, guesser, "Stranger");
     CHECK(reply && reply->pairing_open);
-    const auto guesser = link::ClientSession::new_pairing(random_fill);
+    CHECK(reply && link::ClientSession::enter_pin(guesser, reply->pairing_public_key, code == "000000" ? "000001" : "000000"));
     for (int i = 0; i < LinkServer::kMaxPairingFailures; ++i) {
-      client.send(link::ClientSession::make_pair_request(guesser, code == "000000" ? "000001" : "000000", "Stranger", 10 + static_cast<std::uint64_t>(i)));
+      client.send(link::ClientSession::make_pair_request(guesser, "Stranger"));
       client.receive();
     }
     CHECK(eventually([&] {
       return !f.server.pairing_open();
     }));
     const int shown_before = f.shown();
-    reply = pair_start(client, 8, "Stranger");
+    auto late = link::ClientSession::begin_pairing(random_fill);
+    reply = pair_start(client, late, "Stranger");
     CHECK(reply && !reply->pairing_open);
     std::this_thread::sleep_for(50ms);
     CHECK(f.shown() == shown_before);
@@ -364,7 +399,8 @@ namespace {
   void test_remote_pairing_disabled() {
     Fixture f(3000ms, false);
     TestClient client(f.server.port());
-    const auto reply = pair_start(client, 9, "Couch iPad");
+    auto attempt = link::ClientSession::begin_pairing(random_fill);
+    const auto reply = pair_start(client, attempt, "Couch iPad");
     CHECK(reply && !reply->pairing_open);
     std::this_thread::sleep_for(50ms);
     CHECK(f.shown() == 0);
@@ -377,7 +413,7 @@ namespace {
     const auto pairing = f.pair(client);
 
     // An unpaired client's hello is ignored.
-    link::ClientSession outsider(link::ClientSession::new_pairing(random_fill), "outsider", random_fill);
+    link::ClientSession outsider(link::Pairing {0x12345678, couchlink::crypto::x25519_public_key(test_secret(2))}, "outsider", random_fill);
     client.send(outsider.make_hello(clock_us()));
     CHECK(client.receive(200).empty());
 
@@ -613,6 +649,33 @@ namespace {
     CHECK(f.server.status().sessions == 2 && f.server.status().controllers == 2);
   }
 
+  void test_other_versions() {
+    Fixture f;
+    TestClient client(f.server.port());
+
+    // Apps of any protocol version get an answer to their probe, so they can
+    // tell the user which side to update.
+    for (std::uint8_t version : {std::uint8_t {1}, std::uint8_t {link::kVersion}, std::uint8_t {link::kVersion + 1}}) {
+      link::Header header;
+      header.version = version;
+      header.type = link::Type::kProbe;
+      client.send(link::seal(header, link::encode(link::Probe {100u + version}), nullptr));
+      const auto reply = client.receive();
+      const auto probe = link::ClientSession::parse_probe_reply(reply.data(), reply.size(), 100u + version);
+      CHECK(probe && probe->min_version == link::kMinVersion && probe->max_version == link::kVersion);
+      CHECK(probe && probe->software_version == "test");
+    }
+
+    // Anything else from another version is ignored.
+    const auto pairing = f.pair(client);
+    link::ClientSession session(pairing, "Test iPad", random_fill);
+    auto hello = session.make_hello(clock_us());
+    hello[4] = 1;
+    client.send(hello);
+    CHECK(client.receive(200).empty());
+    CHECK(f.connect(client, session));
+  }
+
   void test_discovery_label() {
     using couchlink::discovery::instance_label;
     CHECK(instance_label("GAMING-PC") == "GAMING-PC");
@@ -636,5 +699,6 @@ int main() {
   test_reconnect_replay_and_timeout();
   test_backend_failure_and_instances();
   test_discovery_label();
+  test_other_versions();
   return test::report_and_exit_code();
 }

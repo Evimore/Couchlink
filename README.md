@@ -79,6 +79,12 @@ Check *Steam → Settings → Controller*. If an Xbox or PlayStation controller 
 **Can the streaming app's controller shortcuts (like the quit combo) be used?**
 No, because the streaming app doesn't see the controller. Leave the stream with a touch gesture on the iPad or iPhone, or the Siri Remote on Apple TV.
 
+**Is the connection secure?**
+Yes. Pairing uses a key exchange protected by the code shown on your PC, and everything after that is encrypted, like Moonlight and Steam Link do. See [SECURITY.md](SECURITY.md).
+
+**Can I use the controller on the iPad itself?**
+Tap **Disconnect from the PC** in Couchlink and it works as the iPad's mouse again. Tap **Connect**, or switch the controller off and on, to send it back to the PC.
+
 **Is it safe for my controller?**
 Couchlink passes settings, haptics, calibration and turning it off to your controller, but never firmware updates, factory resets, or pairing and radio changes: those could leave it unreachable over Bluetooth. To update the controller's firmware, plug it into the PC. See [SECURITY.md](SECURITY.md) for how the connection is protected.
 

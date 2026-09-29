@@ -62,7 +62,9 @@ If Couchlink doesn't find the PC at home:
 ## Good to know
 
 - **Don't swipe Couchlink away** in the app switcher. iOS then disconnects the controller (which switches itself off) and doesn't start Couchlink again for it until you open Couchlink yourself. Left in the background, Couchlink reconnects the controller whenever you switch it on, even while another app is in front.
-- **No pointer on the iPad.** While Couchlink runs, it turns off the controller's built-in mouse mode, so the trackpads don't also move the iPad's pointer and your inputs don't reach the PC twice. Steam Input on the PC decides what the trackpads do. Without Couchlink, the controller acts as a plain mouse and keyboard.
+- **Using the controller with the iPad itself.** While the controller goes to the PC, Couchlink turns off its built-in mouse mode, so the trackpads don't also move the iPad's pointer. Tap **Disconnect from the PC** to use it with the iPad (the pointer works again); tap **Connect to the PC**, or switch the controller off and on, to send it back. If the PC can't be reached for 10 seconds, the controller works as the iPad's mouse again by itself.
+- **After updating from a version before 0.2**, pair once more: pairing now uses a safer key exchange, and the connection is encrypted.
+- **"Update Couchlink on the PC" / "Update the app":** the app and the PC tell each other their versions; if they can't talk, the app says which one to update.
 
 ## Updating
 

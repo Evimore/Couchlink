@@ -132,7 +132,19 @@ namespace {
       std::printf("No couchlink-host answered at %s:%u\n", options.host.c_str(), options.port);
       return 1;
     }
-    std::printf("Found '%s'%s\n", reply->host_name.c_str(), reply->pairing_open ? " (pairing open)" : "");
+    std::printf("Found '%s' (Couchlink %s, protocol %d-%d)%s\n", reply->host_name.c_str(),
+                reply->software_version.empty() ? "?" : reply->software_version.c_str(), reply->min_version, reply->max_version,
+                reply->pairing_open ? ", pairing open" : "");
+    switch (link::check_compatibility(*reply)) {
+      case link::Compatibility::kUpdateHost:
+        std::printf("It is older than this tool: update couchlink-host.\n");
+        return 1;
+      case link::Compatibility::kUpdateClient:
+        std::printf("It is newer than this tool: update couchlink-sim.\n");
+        return 1;
+      case link::Compatibility::kCompatible:
+        break;
+    }
     return 0;
   }
 
@@ -144,13 +156,13 @@ namespace {
     std::uint8_t buffer[link::kMaxDatagram];
 
     // Ask the host to open pairing; it shows a code on its screen.
-    const auto nonce = random_nonce();
+    auto pairing = link::ClientSession::begin_pairing(random_fill);
     std::optional<link::ProbeReply> opened;
     for (int attempt = 0; attempt < 5 && !g_quit && !(opened && opened->pairing_open); ++attempt) {
-      link.send(link::ClientSession::make_pair_start(nonce, "couchlink-sim"));
+      link.send(link::ClientSession::make_pair_start(pairing, "couchlink-sim"));
       const int received = link.receive(buffer, sizeof(buffer), 1000);
       if (received > 0) {
-        opened = link::ClientSession::parse_probe_reply(buffer, static_cast<std::size_t>(received), nonce);
+        opened = link::ClientSession::parse_probe_reply(buffer, static_cast<std::size_t>(received), pairing.nonce);
       }
     }
     if (!opened) {
@@ -171,8 +183,15 @@ namespace {
       }
     }
 
-    const auto pairing = link::ClientSession::new_pairing(random_fill);
-    const auto request = link::ClientSession::make_pair_request(pairing, pin, "couchlink-sim", random_nonce());
+    if (link::check_compatibility(*opened) != link::Compatibility::kCompatible) {
+      std::printf("'%s' runs an incompatible Couchlink (%s): update one of them.\n", opened->host_name.c_str(), opened->software_version.c_str());
+      return 1;
+    }
+    if (!link::ClientSession::enter_pin(pairing, opened->pairing_public_key, pin)) {
+      std::printf("'%s' sent an invalid pairing key.\n", opened->host_name.c_str());
+      return 1;
+    }
+    const auto request = link::ClientSession::make_pair_request(pairing, "couchlink-sim");
     const auto deadline = Clock::now() + std::chrono::seconds(30);
     while (!g_quit && Clock::now() < deadline) {
       link.send(request);
@@ -188,7 +207,7 @@ namespace {
         std::printf("The host rejected the code.\n");
         return 1;
       }
-      if (!save_pairing(options.state, pairing)) {
+      if (!save_pairing(options.state, pairing.pairing())) {
         std::fprintf(stderr, "paired, but could not write %s\n", options.state.c_str());
         return 1;
       }

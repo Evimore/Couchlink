@@ -7,13 +7,21 @@
  * streaming app's own stream. Keeping the controller on its own channel means the streaming host
  * (Vibepollo, Sunshine, Apollo...) needs no changes at all.
  *
- * Every datagram starts with a 20-byte header. After pairing, datagrams carry
- * a truncated HMAC-SHA-256 tag and a strictly increasing counter, so nobody
- * on the network can inject or replay controller input. The payload is not
- * encrypted: it is controller state. See docs/protocol.md and SECURITY.md.
+ * Every datagram starts with a 20-byte header. Pairing is an X25519 key
+ * exchange bound to the 6-digit code shown on the PC, so the pairing key never
+ * crosses the network. Session datagrams are encrypted and authenticated with
+ * ChaCha20-Poly1305 and carry a strictly increasing counter, so nobody on the
+ * network can read, inject or replay controller input. See docs/protocol.md
+ * and SECURITY.md.
+ *
+ * Compatibility: the header carries the protocol version. Probe and
+ * ProbeReply are understood by every version (their layouts only ever grow),
+ * so an app and a PC of different versions can always tell the user which one
+ * to update. Everything else requires both sides to speak kVersion.
  */
 #pragma once
 
+#include "crypto.h"
 #include "triton.h"
 
 #include <array>
@@ -27,7 +35,10 @@ namespace couchlink::link {
 
   constexpr std::uint16_t kDefaultPort = 48150;
   constexpr std::uint32_t kMagic = 0x314B4C43;  // "CLK1" on the wire
-  constexpr std::uint8_t kVersion = 1;
+  /** Protocol version this build speaks. */
+  constexpr std::uint8_t kVersion = 2;
+  /** Oldest protocol version this build still accepts. */
+  constexpr std::uint8_t kMinVersion = 2;
   constexpr std::size_t kHeaderSize = 20;
   constexpr std::size_t kTagSize = 16;
   constexpr std::size_t kKeySize = 32;
@@ -72,6 +83,7 @@ namespace couchlink::link {
   KeyKind key_kind(Type type);
 
   struct Header {
+    std::uint8_t version = kVersion;  ///< protocol version on the wire
     Type type = Type::kProbe;
     std::uint16_t payload_length = 0;
     std::uint32_t client_id = 0;
@@ -89,21 +101,53 @@ namespace couchlink::link {
    */
   std::vector<std::uint8_t> seal(const Header &header, const std::vector<std::uint8_t> &payload, const Key *key);
 
-  /** Parse the header without checking the tag. Returns nullopt for malformed input. */
+  /**
+   * @brief Parse the header without checking the tag.
+   * @return nullopt for malformed input, or a version other than kVersion
+   *         (except for Probe and ProbeReply, which every version reads).
+   */
   std::optional<Header> peek(const std::uint8_t *data, std::size_t length);
 
+  /** The protocol version of anything that looks like a link datagram (right magic), else nullopt. */
+  std::optional<std::uint8_t> wire_version(const std::uint8_t *data, std::size_t length);
+
   /**
-   * @brief Parse and authenticate a datagram.
+   * @brief Parse and authenticate (and for session types, decrypt) a datagram.
    * @param key Required unless the type is unauthenticated; ignored otherwise.
    * @return nullopt if malformed or the tag does not verify.
    */
   std::optional<Datagram> open(const std::uint8_t *data, std::size_t length, const Key *key);
 
-  /** Session key = HMAC(pairing key, label || client nonce || host nonce). */
-  Key derive_session_key(const Key &pairing_key, std::uint64_t client_nonce, std::uint64_t host_nonce);
+  /** One key per direction, so counters never repeat a nonce. */
+  struct SessionKeys {
+    Key client_to_host {};
+    Key host_to_client {};
+  };
 
-  /** Pairing proof = HMAC(PIN, label || client id || key || nonce), truncated to kTagSize. */
-  std::array<std::uint8_t, kTagSize> pairing_proof(const std::string &pin, std::uint32_t client_id, const Key &key, std::uint64_t nonce);
+  /** Derived from the pairing key and both sides' fresh nonces, per session. */
+  SessionKeys derive_session_keys(const Key &pairing_key, std::uint64_t client_nonce, std::uint64_t host_nonce);
+
+  /**
+   * What both sides derive during pairing. The pairing key depends on the
+   * X25519 shared secret and the PIN, so someone who only listens learns
+   * neither. The result key authenticates the PairResult and does not depend
+   * on the PIN, so a wrong code can be reported.
+   */
+  struct PairingKeys {
+    Key pairing_key {};
+    Key result_key {};
+    std::array<std::uint8_t, kTagSize> proof {};
+  };
+
+  /**
+   * @param own_secret This side's temporary X25519 secret.
+   * @param peer_public The other side's temporary public key.
+   * @return nullopt if the peer's key is invalid (small-order point).
+   */
+  std::optional<PairingKeys> derive_pairing_keys(
+    const Key &own_secret, const Key &peer_public, std::uint32_t client_id, const Key &client_public,
+    const Key &host_public, std::uint64_t nonce, const std::string &pin
+  );
 
   /** Accepts only strictly increasing counters. */
   class ReplayGuard {
@@ -122,11 +166,28 @@ namespace couchlink::link {
     std::uint64_t nonce = 0;
   };
 
+  /** Software version string length limit (e.g. "0.2.0-beta.1"). */
+  constexpr std::size_t kMaxSoftwareVersionLength = 32;
+
   struct ProbeReply {
     std::uint64_t nonce = 0;
     bool pairing_open = false;
     std::string host_name;
+    // From version 2 on (a version 1 reply reads as min = max = 1):
+    std::uint8_t min_version = kMinVersion;
+    std::uint8_t max_version = kVersion;
+    std::string software_version;  ///< couchlink-host's own version, for messages
+    Key pairing_public_key {};  ///< the host's temporary pairing key while pairing is open, else zero
   };
+
+  /** Whether this build and the host that sent @p reply can talk, and if not, which side to update. */
+  enum class Compatibility {
+    kCompatible,
+    kUpdateHost,  ///< the host only speaks older versions
+    kUpdateClient,  ///< the host needs a newer client
+  };
+
+  Compatibility check_compatibility(const ProbeReply &reply, std::uint8_t client_version = kVersion);
 
   /**
    * A client that is not paired asks the host to show a pairing code. The host
@@ -139,7 +200,7 @@ namespace couchlink::link {
   };
 
   struct PairRequest {
-    Key key {};
+    Key client_public_key {};  ///< the client's temporary X25519 key
     std::uint64_t nonce = 0;
     std::string client_name;
     std::array<std::uint8_t, kTagSize> proof {};
@@ -152,6 +213,7 @@ namespace couchlink::link {
   struct Hello {
     std::uint64_t client_nonce = 0;
     std::string client_name;
+    std::string software_version;  ///< the app's version, for the host's log
   };
 
   constexpr std::uint32_t kHostCapSteamController2026 = 0x00000001;
@@ -246,7 +308,8 @@ namespace couchlink::link {
   std::vector<std::uint8_t> encode(const HidOutput &message);
 
   std::optional<Probe> decode_probe(const std::vector<std::uint8_t> &payload);
-  std::optional<ProbeReply> decode_probe_reply(const std::vector<std::uint8_t> &payload);
+  /** @param version The header's protocol version: the layout differs for version 1. */
+  std::optional<ProbeReply> decode_probe_reply(const std::vector<std::uint8_t> &payload, std::uint8_t version = kVersion);
   std::optional<PairStart> decode_pair_start(const std::vector<std::uint8_t> &payload);
   std::optional<PairRequest> decode_pair_request(const std::vector<std::uint8_t> &payload);
   std::optional<PairResult> decode_pair_result(const std::vector<std::uint8_t> &payload);

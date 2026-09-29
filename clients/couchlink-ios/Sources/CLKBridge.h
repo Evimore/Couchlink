@@ -30,6 +30,8 @@ typedef NS_ENUM(NSInteger, CLKLinkState) {
 @property (nonatomic, copy) NSString *linkText;
 @property (nonatomic, copy) NSArray<NSString *> *controllers;
 @property (nonatomic) double rttMs;               // -1 if unknown
+/// The user tapped Disconnect: controllers work with this device, not the PC.
+@property (nonatomic) BOOL paused;
 @property (nonatomic, copy) NSString *timingNow;  // Bluetooth report timing, last few seconds
 @property (nonatomic, copy) NSString *timingForeground;
 @property (nonatomic, copy) NSString *timingBackground;
@@ -61,6 +63,14 @@ typedef NS_ENUM(NSInteger, CLKLinkState) {
 
 /// Save a PC address ("192.168.1.20", "gaming-pc.local", "100.64.1.2", "[fe80::1]:48150") and connect.
 - (void)connectToPC:(NSString *)address;
+
+/// Disconnect: unplug the controllers on the PC and give them back to this
+/// device (its pointer works again). Connect, or switching a controller off
+/// and on, sends them to the PC again.
+- (void)setPaused:(BOOL)paused;
+
+/// The app is about to be closed: give the controllers their mouse mode back.
+- (void)prepareForTermination;
 
 - (void)submitPairingCode:(NSString *)code;
 - (void)cancelPairing;
