@@ -491,10 +491,10 @@ namespace {
         status.linkText = [self linkText];
         NSMutableArray<NSString *> *controllers = [NSMutableArray array];
         for (ILNController *controller in self->_controllers.allValues) {
-            NSString *state = self->_paused ? @"working with this device (disconnected from the PC)"
-                            : self->_state != ILNLinkStateConnected ? @"connected to this device"
-                            : controller.attached ? @"full Steam Input on the PC"
-                            : @"plugging in on the PC...";
+            NSString *state = self->_paused ? @"Disconnected from PC"
+                            : self->_state != ILNLinkStateConnected ? @"Waiting for PC"
+                            : controller.attached ? @"Connected to PC"
+                            : @"Connecting to PC...";
             [controllers addObject:[NSString stringWithFormat:@"%@: %@", controller.device.name, state]];
         }
         status.controllers = controllers;
@@ -1071,7 +1071,7 @@ namespace {
             for (ILNController *controller in self->_controllers.allValues) {
                 controller.attached = NO;
             }
-            [self logEvent:@"Disconnected: the controller works with this device until you tap Connect or switch it off and on"];
+            [self logEvent:@"Disconnected: the controller works with this device until you tap Connect to PC or switch it off and on"];
         } else {
             [self logEvent:@"Connected: sending the controller to the PC again"];
         }

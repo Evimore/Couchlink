@@ -62,7 +62,7 @@ If InputLine doesn't find the PC at home:
 ## Good to know
 
 - **Don't swipe InputLine away** in the app switcher. iOS then disconnects the controller (which switches itself off) and doesn't start InputLine again for it until you open InputLine yourself. Left in the background, InputLine reconnects the controller whenever you switch it on, even while another app is in front.
-- **Using the controller with the iPad itself.** While the controller goes to the PC, InputLine turns off its built-in mouse mode, so the trackpads don't also move the iPad's pointer. Tap **Disconnect from the PC** to use it with the iPad (the pointer works again); tap **Connect to the PC**, or switch the controller off and on, to send it back. If the PC can't be reached for 10 seconds, the controller works as the iPad's mouse again by itself.
+- **Using the controller with the iPad itself.** While the controller goes to the PC, InputLine turns off its built-in mouse mode, so the trackpads don't also move the iPad's pointer. Tap **Disconnect from PC** (shown while a controller is connected) to use it with the iPad (the pointer works again); tap **Connect to PC**, or switch the controller off and on, to send it back. If the PC can't be reached for 10 seconds, the controller works as the iPad's mouse again by itself.
 - **After updating from a version before 0.2**, pair once more: pairing now uses a safer key exchange, and the connection is encrypted.
 - **"Update InputLine on the PC" / "Update the app":** the app and the PC tell each other their versions; if they can't talk, the app says which one to update.
 

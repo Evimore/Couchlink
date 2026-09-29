@@ -93,13 +93,12 @@
       On a first install or an upgrade (not a repair, which would stop the
       running service), before the files go in: stop a copy set up by hand
       with 'inputline-host install' (logon task, firewall rule, running
-      process), also under the project's earlier name, Couchlink. Errors are
-      ignored: on a fresh PC there is nothing to clean up.
+      process). Errors are ignored: on a fresh PC there is nothing to clean up.
     -->
     <SetProperty Id="RemoveLegacyInstall"
                  Sequence="execute"
                  Before="RemoveLegacyInstall"
-                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Unregister-ScheduledTask -TaskName InputLine -Confirm:$false -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName Couchlink -Confirm:$false -ErrorAction SilentlyContinue; Get-Process inputline-host, couchlink-host -ErrorAction SilentlyContinue | Stop-Process -Force; Remove-NetFirewallRule -DisplayName InputLine, Couchlink -ErrorAction SilentlyContinue; exit 0&quot;" />
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Unregister-ScheduledTask -TaskName InputLine -Confirm:$false -ErrorAction SilentlyContinue; Get-Process inputline-host -ErrorAction SilentlyContinue | Stop-Process -Force; Remove-NetFirewallRule -DisplayName InputLine -ErrorAction SilentlyContinue; exit 0&quot;" />
     <CustomAction Id="RemoveLegacyInstall"
                   BinaryRef="Wix4UtilCA_X64"
                   DllEntry="WixQuietExec64"

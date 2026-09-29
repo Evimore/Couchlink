@@ -107,11 +107,11 @@ jobs:
           }
           $data = Join-Path $env:ProgramData 'InputLine'
 
-          # Existing pairings, and a setup made by hand under the earlier name.
+          # Existing pairings, and a setup made by hand with 'inputline-host install'.
           Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force (Join-Path $data 'pairing') | Out-Null
           Set-Content (Join-Path $data 'pairing\inputline-host.conf') '# paired devices'
-          Register-ScheduledTask -TaskName Couchlink -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument '/c exit') -Force | Out-Null
+          Register-ScheduledTask -TaskName InputLine -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument '/c exit') -Force | Out-Null
 
           $code = Invoke-Msi @('/i', 'InputLine-Setup.msi', '/qn', '/l*v', 'msi-nousbip.log')
           Check ($code -eq 1603) "refuses to install without usbip-win2 (exit $code)"
@@ -128,7 +128,7 @@ jobs:
           Check (Select-String -Path $log -Pattern 'listening on UDP port 48150' -Quiet) 'the service listens on the link port'
           Check ($null -ne (Get-NetFirewallRule -DisplayName 'InputLine (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule exists'
           Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'existing pairings are kept'
-          Check ($null -eq (Get-ScheduledTask -TaskName Couchlink -ErrorAction SilentlyContinue)) 'the setup under the earlier name is removed'
+          Check ($null -eq (Get-ScheduledTask -TaskName InputLine -ErrorAction SilentlyContinue)) 'the setup made by hand is removed'
           $acl = (icacls (Join-Path $data 'pairing')) -join "`n"
           Write-Host $acl
           Check (-not ($acl -match 'BUILTIN\\Users')) 'users cannot read the pairing keys'

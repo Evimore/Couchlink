@@ -26,6 +26,7 @@
     UILabel *_eventsLabel;
     UIButton *_shareButton;
     UIButton *_pauseButton;
+    UILabel *_pauseNote;
     UIAlertController *_codeAlert;
     NSTimer *_refreshTimer;
 }
@@ -124,17 +125,20 @@
     [stack addArrangedSubview:_discoveredStack];
     _linkLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
     [stack addArrangedSubview:_linkLabel];
-    [stack addArrangedSubview:[self note:@"The PC needs inputline-host running (inputline-host install). At home, InputLine finds it on the network by itself. Away from home, enter its address on your VPN (for example Tailscale)."]];
+    [stack addArrangedSubview:[self note:@"The PC needs InputLine installed (see the Releases page). At home, InputLine finds it on the network by itself. Away from home, enter its address on your VPN (for example Tailscale)."]];
     [stack setCustomSpacing:24 afterView:stack.arrangedSubviews.lastObject];
 
     // Controller
     [stack addArrangedSubview:[self heading:@"Controller"]];
     _controllersLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
     [stack addArrangedSubview:_controllersLabel];
-    _pauseButton = [self buttonWithTitle:@"Disconnect from the PC" action:@selector(togglePaused)];
+    _pauseButton = [self buttonWithTitle:@"Disconnect from PC" action:@selector(togglePaused)];
+    _pauseButton.hidden = YES;
     [stack addArrangedSubview:_pauseButton];
-    [stack addArrangedSubview:[self note:@"Disconnect to use the controller with this device (its pointer works again). "
-                                          "It goes back to the PC when you tap Connect, or when you switch the controller off and on."]];
+    _pauseNote = [self note:@"Disconnect to use the controller with this device (its pointer works again). "
+                             "It goes back to the PC when you tap Connect to PC, or when you switch the controller off and on."];
+    _pauseNote.hidden = YES;
+    [stack addArrangedSubview:_pauseNote];
     [stack addArrangedSubview:[self buttonWithTitle:@"Pair a new controller" action:@selector(pairController)]];
     [stack addArrangedSubview:[self note:@"Put the controller in Bluetooth pairing mode first, then tap the button and accept the pairing request. "
                                           "Paired controllers reconnect by themselves when you switch them on."]];
@@ -197,7 +201,9 @@
 {
     ILNStatus *status = [ILNBridge shared].status;
     _linkLabel.text = status.linkText;
-    [_pauseButton setTitle:status.paused ? @"Connect to the PC" : @"Disconnect from the PC" forState:UIControlStateNormal];
+    [_pauseButton setTitle:status.paused ? @"Connect to PC" : @"Disconnect from PC" forState:UIControlStateNormal];
+    _pauseButton.hidden = status.controllers.count == 0;
+    _pauseNote.hidden = _pauseButton.hidden;
     [self showDiscoveredPCs:status];
     _controllersLabel.text = status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"\n"]
                                                           : @"No controller connected. Switch it on, or pair a new one.";
