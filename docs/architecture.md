@@ -58,10 +58,7 @@ Steam identifies a Steam Controller by its full USB identity and a feature-repor
 |---|---|
 | **USB/IP via usbip-win2** | ✅ Chosen. The driver is Microsoft-signed, so no test mode or certificates. Our code stays in user space and presents a complete USB device, exactly as HIDMaestro's `steam-controller-2` persona does. |
 | Custom KMDF/VHF driver | Needs an EV certificate and WHQL signing, or test-signing mode (which anti-cheat dislikes). |
-| libvirtualhid (Sunshine) | VHF-based, with a paid license for its Windows driver. It works from normalised state rather than raw reports. |
-| Vibepollo's libvirtualgamepad | VHF-based; no Steam Controller profile, and it only accepts normalised input. |
-| ViGEmBus | Xbox 360 / DS4 only; retired. |
-| VIIPER | USB/IP too, but has no Steam Controller device. |
+| Virtual gamepad drivers used by streaming hosts | Built for standard gamepads from normalised state, not a raw Steam Controller with its full USB identity. |
 
 The same USB/IP server also works on Linux with the in-kernel `vhci-hcd`. That's how CI tests the whole path end to end.
 
@@ -72,7 +69,7 @@ The same USB/IP server also works on Linux with the in-kernel `vhci-hcd`. That's
   - It unwraps the 16-bit, 32 µs IMU clock into a continuous microsecond counter.
   - It writes an identity quaternion, since Bluetooth frames carry none.
 - **Identity.** `FeatureResponder` answers `GET_ATTRIBUTES_VALUES`, `GET_STRING_ATTRIBUTE`, wireless state and the settings read-back locally, with values read from real hardware. Waiting for a network round trip would stall Steam's claim.
-- **Safety.** Commands are classified as *answer locally*, *forward* (settings, haptic pulses, IMU reset, gyro calibration, turning the controller off) or *blocked*. Blocked covers factory reset, serial/pairing/radio writes, stick and trigger calibration, audio and firmware update, and anything unknown. Blocked commands never reach the physical controller.
+- **Safety.** Commands are classified as *answer locally*, *forward* (settings, haptic pulses, IMU reset, turning the controller off, and gyro, stick, trigger and trackpad calibration, which run on the controller itself) or *blocked*. Blocked covers firmware and audio updates (the bootloader can't run over the link), factory reset (it wipes the Bluetooth pairing mid-session), serial/pairing/radio writes, turning keyboard/mouse emulation back on (double input on the device), and anything unknown. Blocked commands never reach the physical controller; Steam gets a reply from the virtual controller.
 - **Output.** Haptic output reports (`0x80`–`0x89`), whether written to the interrupt OUT endpoint or via `SET_REPORT`, go back to the client verbatim.
 
 ## Threads

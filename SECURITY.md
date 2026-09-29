@@ -15,7 +15,7 @@
 - **The pairing exchange sends the new key in the clear**, once. Someone recording your network during those seconds could later authenticate as that device. Pair on a network you trust. A key exchange with public-key cryptography is on the roadmap.
 - **Discovery announces the PC's name** and link port on the local network (DNS-SD `_couchlink._udp`), like any AirPlay or printer service. `--no-discovery` turns it off.
 - **`couchlink-host` needs administrator/root rights** to run `usbip attach`; the Windows installer runs it as a service (LocalSystem). Its USB/IP server listens on 127.0.0.1 only. The service reads extra options from `C:\ProgramData\Couchlink\options.txt`, a folder only administrators can change.
-- **Firmware, flash, pairing and calibration commands from the PC are never forwarded** to your physical controller (see `core/src/feature_responder.cpp`). Steam cannot update or reconfigure the real controller through the link; plug it into the PC for firmware updates.
+- **Firmware updates, factory reset, and serial, pairing and radio writes from the PC are never forwarded** to your physical controller (see `core/src/feature_responder.cpp`). Steam cannot update the real controller's firmware or change its identity through the link; plug it into the PC for firmware updates. Settings, haptics, turning it off and calibration do reach it.
 
 ## Reporting a vulnerability
 

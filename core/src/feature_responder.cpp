@@ -117,13 +117,23 @@ namespace couchlink {
       case kCmdLoadDefaultSettings:
       case kCmdTriggerHapticPulse:
       case kCmdTurnOffController:  // Steam button + Y, "Turn off controller"
-      case kCmdCalibrateGyro:
       case kCmdResetImu:
+      // Calibration runs on the controller itself; a poor result is fixed by
+      // calibrating again. Readings Steam asks for afterwards come from the
+      // local model, not the controller.
+      case kCmdCalibrateGyro:
+      case kCmdCalibrateTrackpads:
+      case kCmdCalibrateJoystick:
+      case kCmdCalibrateAnalogTriggers:
+      case kCmdCalibrateAnalog:
         return FeatureDisposition::kForward;
 
       default:
-        // Factory reset, serial/pairing/radio writes, stick and trigger
-        // calibration, audio and firmware update, and anything unknown.
+        // Firmware and audio updates (the bootloader can't run over the
+        // link), factory reset (wipes the Bluetooth pairing mid-session),
+        // serial/pairing/radio writes (the link depends on them), turning
+        // keyboard/mouse emulation back on (double input on the device),
+        // and anything unknown.
         return FeatureDisposition::kBlocked;
     }
   }

@@ -4,7 +4,8 @@
   Build (WiX Toolset v5, see .github/workflows):
     wix build installer/windows/Couchlink.wxs -arch x64
       -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext
-      -d Version=1.2.3 -d BinDir=build/host/Release -d RootDir=. -o Couchlink-Setup.msi
+      -d Version=1.2.3 -d BinDir=build/host/Release -d RootDir=.
+      -d RepoUrl=https://github.com/OWNER/REPO -o Couchlink-Setup.msi
 
   Test installs without usbip-win2 (CI): msiexec /i Couchlink-Setup.msi SKIPUSBIPCHECK=1
 -->
@@ -27,8 +28,8 @@
 
     <Icon Id="CouchlinkIcon" SourceFile="$(var.RootDir)\installer\windows\couchlink.ico" />
     <Property Id="ARPPRODUCTICON" Value="CouchlinkIcon" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/orel-mor/Couchlink" />
-    <Property Id="ARPHELPLINK" Value="https://github.com/orel-mor/Couchlink/blob/main/docs/host-setup-windows.md" />
+    <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
+    <Property Id="ARPHELPLINK" Value="$(var.RepoUrl)/blob/main/docs/host-setup-windows.md" />
 
     <!-- usbip-win2 attaches the virtual controller; without it nothing reaches Steam. -->
     <Property Id="USBIPEXE">
@@ -69,9 +70,13 @@
           <!-- So 'couchlink-host clients', 'demo' etc. work in any terminal. -->
           <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
         </Component>
-        <Component Id="Notices">
-          <File Id="License" Source="$(var.RootDir)\LICENSE" Name="LICENSE.txt" KeyPath="yes" />
+        <Component Id="License">
+          <File Id="License" Source="$(var.RootDir)\LICENSE" Name="LICENSE.txt" />
+        </Component>
+        <Component Id="CoreLicense">
           <File Id="CoreLicense" Source="$(var.RootDir)\core\LICENSE" Name="LICENSE-MIT.txt" />
+        </Component>
+        <Component Id="ThirdParty">
           <File Id="ThirdParty" Source="$(var.RootDir)\THIRD_PARTY_NOTICES.md" Name="THIRD_PARTY_NOTICES.txt" />
         </Component>
       </Directory>
@@ -79,7 +84,9 @@
 
     <Feature Id="Main" Title="Couchlink">
       <ComponentRef Id="Host" />
-      <ComponentRef Id="Notices" />
+      <ComponentRef Id="License" />
+      <ComponentRef Id="CoreLicense" />
+      <ComponentRef Id="ThirdParty" />
     </Feature>
 
     <!--

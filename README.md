@@ -41,13 +41,13 @@ Steam Link is the only streaming app that brings the Steam Controller across wit
 ### 1. Set up the PC
 
 1. Install [**usbip-win2**](https://github.com/vadimgrn/usbip-win2/releases). It lets Couchlink plug a virtual controller into Windows; its drivers are signed by Microsoft.
-2. Download the **Couchlink-Setup** installer (`.msi`) from [Releases](https://github.com/orel-mor/Couchlink/releases) and run it. If Windows says it "protected your PC", click **More info → Run anyway** (the installer isn't code-signed yet).
+2. Download the **Couchlink-Setup** installer (`.msi`) from [Releases](../../releases) and run it. If Windows says it "protected your PC", click **More info → Run anyway** (the installer isn't code-signed yet).
 
 That's all on the PC. Couchlink now runs in the background and starts with Windows. More in the [Windows setup guide](docs/host-setup-windows.md).
 
 ### 2. Install the app
 
-Download the **Couchlink** app (`Couchlink-…-iOS.ipa`) from [Releases](https://github.com/orel-mor/Couchlink/releases) and install it from your PC with Sideloadly and a free Apple ID. Step by step: [Install Couchlink](docs/install-app.md).
+Download the **Couchlink** app (`Couchlink-…-iOS.ipa`) from [Releases](../../releases) and install it from your PC with Sideloadly and a free Apple ID. Step by step: [Install Couchlink](docs/install-app.md).
 
 ### 3. Pair and play
 
@@ -80,7 +80,7 @@ Check *Steam → Settings → Controller*. If an Xbox or PlayStation controller 
 No, because the streaming app doesn't see the controller. Leave the stream with a touch gesture on the iPad or iPhone, or the Siri Remote on Apple TV.
 
 **Is it safe for my controller?**
-Couchlink never passes firmware updates, factory resets, pairing or calibration commands to your controller; only settings, haptics and turning it off reach it. To update the controller's firmware, plug it into the PC. See [SECURITY.md](SECURITY.md) for how the connection is protected.
+Couchlink passes settings, haptics, calibration and turning it off to your controller, but never firmware updates, factory resets, or pairing and radio changes: those could leave it unreachable over Bluetooth. To update the controller's firmware, plug it into the PC. See [SECURITY.md](SECURITY.md) for how the connection is protected.
 
 **Why isn't it on the App Store?**
 It will be. Until then, a free Apple ID lets you install it yourself; see [Install Couchlink](docs/install-app.md).
@@ -90,7 +90,7 @@ It will be. Until then, a free Apple ID lets you install it yourself; see [Insta
 - [Windows setup](docs/host-setup-windows.md): the installer, settings and troubleshooting
 - [Install Couchlink](docs/install-app.md): sideloading, updates, Apple TV
 - [Checking smoothness](docs/timing.md): timing statistics on the device and the PC
-- [Architecture](docs/architecture.md), [link protocol](docs/protocol.md) and [research notes](docs/research.md)
+- [Architecture](docs/architecture.md) and [link protocol](docs/protocol.md)
 - [Roadmap](docs/roadmap.md)
 
 ## For developers

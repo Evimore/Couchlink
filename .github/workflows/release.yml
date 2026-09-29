@@ -72,7 +72,7 @@ jobs:
           wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
           wix build installer/windows/Couchlink.wxs -arch x64 `
             -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
-            -d Version=${{ needs.check.outputs.app-version }} -d BinDir=build/host/Release -d "RootDir=${{ github.workspace }}" `
+            -d Version=${{ needs.check.outputs.app-version }} -d BinDir=build/host/Release -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}" `
             -o "Couchlink-Setup-$env:TAG.msi"
       - uses: actions/upload-artifact@v4
         with:

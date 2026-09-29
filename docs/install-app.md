@@ -13,7 +13,7 @@ The same app runs on iPad and iPhone (iOS / iPadOS 15 or later).
 
 ## 1. Download the app
 
-Open the [Releases](https://github.com/orel-mor/Couchlink/releases) page and download `Couchlink-vX.Y.Z-iOS.ipa` from the latest release.
+Open the [Releases](../../../releases) page and download `Couchlink-vX.Y.Z-iOS.ipa` from the latest release.
 
 > Want the very latest development build instead? Open **Actions**, choose the latest green **CI** run, and download the **`Couchlink-iOS.ipa`** artifact (you must be signed in to GitHub). It arrives as a `.zip`; extract it to get the `.ipa`.
 

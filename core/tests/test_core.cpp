@@ -280,6 +280,10 @@ namespace {
     CHECK(FeatureResponder::classify(0xB7) == FeatureDisposition::kBlocked);  // audio update start
     CHECK(FeatureResponder::classify(0x42) == FeatureDisposition::kBlocked);  // unknown
     CHECK(FeatureResponder::classify(kCmdTurnOffController) == FeatureDisposition::kForward);
+    CHECK(FeatureResponder::classify(kCmdCalibrateJoystick) == FeatureDisposition::kForward);
+    CHECK(FeatureResponder::classify(kCmdCalibrateAnalogTriggers) == FeatureDisposition::kForward);
+    CHECK(FeatureResponder::classify(kCmdCalibrateTrackpads) == FeatureDisposition::kForward);
+    CHECK(FeatureResponder::classify(0xA9) == FeatureDisposition::kBlocked);  // set serial number
     CHECK(FeatureResponder::classify(kCmdTriggerHapticPulse) == FeatureDisposition::kForward);
     CHECK(FeatureResponder::classify(kCmdClearDigitalMappings) == FeatureDisposition::kForward);
     CHECK(FeatureResponder::classify(0x85) == FeatureDisposition::kBlocked);  // keyboard/mouse emulation back on

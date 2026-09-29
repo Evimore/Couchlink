@@ -10,7 +10,7 @@ Download the installer from [usbip-win2 releases](https://github.com/vadimgrn/us
 
 ## 2. Install Couchlink
 
-Download **`Couchlink-Setup-vX.Y.Z.msi`** from [Releases](https://github.com/orel-mor/Couchlink/releases) and run it.
+Download **`Couchlink-Setup-vX.Y.Z.msi`** from [Releases](../../../releases) and run it.
 
 Windows may warn that it "protected your PC", because the installer isn't code-signed yet. Click **More info → Run anyway**.
 
