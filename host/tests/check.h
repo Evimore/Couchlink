@@ -6,7 +6,7 @@
 
 #include <cstdio>
 
-namespace couchlink::test {
+namespace inputline::test {
   inline int g_failures = 0;
   inline int g_checks = 0;
 
@@ -14,13 +14,13 @@ namespace couchlink::test {
     std::printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);
     return g_failures == 0 ? 0 : 1;
   }
-}  // namespace couchlink::test
+}  // namespace inputline::test
 
 #define CHECK(cond)                                                   \
   do {                                                                \
-    ++::couchlink::test::g_checks;                                       \
+    ++::inputline::test::g_checks;                                       \
     if (!(cond)) {                                                    \
-      ++::couchlink::test::g_failures;                                   \
+      ++::inputline::test::g_failures;                                   \
       std::printf("FAIL %s:%d: %s\n", __FILE__, __LINE__, #cond);     \
     }                                                                 \
   } while (0)

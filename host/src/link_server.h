@@ -11,8 +11,8 @@
 #include "client_store.h"
 #include "controller_backend.h"
 #include "net.h"
-#include "couchlink/link_protocol.h"
-#include "couchlink/timing_stats.h"
+#include "inputline/link_protocol.h"
+#include "inputline/timing_stats.h"
 
 #include <atomic>
 #include <chrono>
@@ -24,7 +24,7 @@
 #include <string>
 #include <thread>
 
-namespace couchlink {
+namespace inputline {
 
   class LinkServer {
   public:
@@ -33,8 +33,8 @@ namespace couchlink {
     struct Options {
       std::string bind_address = "::";
       std::uint16_t port = link::kDefaultPort;
-      std::string host_name = "couchlink-host";
-      /** couchlink-host's version, told to clients so they can say which side to update. */
+      std::string host_name = "inputline-host";
+      /** inputline-host's version, told to clients so they can say which side to update. */
       std::string software_version;
       std::chrono::milliseconds session_timeout {3000};
       std::size_t max_controllers_per_session = 4;
@@ -208,4 +208,4 @@ namespace couchlink {
   /** Fill a buffer with cryptographically secure random bytes. */
   void random_bytes(std::uint8_t *out, std::size_t length);
 
-}  // namespace couchlink
+}  // namespace inputline

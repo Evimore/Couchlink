@@ -10,7 +10,7 @@
   #include <unistd.h>
 #endif
 
-namespace couchlink::net {
+namespace inputline::net {
 
   namespace {
 #ifdef _WIN32
@@ -272,4 +272,4 @@ namespace couchlink::net {
     return sent >= 0 && static_cast<std::size_t>(sent) == length;
   }
 
-}  // namespace couchlink::net
+}  // namespace inputline::net

@@ -1,17 +1,17 @@
 //
-//  CLKBridge.mm
-//  Couchlink
+//  ILNBridge.mm
+//  InputLine
 //
 
-#import "CLKBridge.h"
-#import "CLKDiscovery.h"
-#import "CLKTritonBLE.h"
+#import "ILNBridge.h"
+#import "ILNDiscovery.h"
+#import "ILNTritonBLE.h"
 
 #import <Security/Security.h>
 #import <UIKit/UIKit.h>
 
-#include "couchlink/link_client.h"
-#include "couchlink/timing_stats.h"
+#include "inputline/link_client.h"
+#include "inputline/timing_stats.h"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -24,7 +24,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-using namespace couchlink;
+using namespace inputline;
 
 namespace {
 
@@ -42,26 +42,26 @@ namespace {
     // mouse again (its built-in mode), so it is never stuck doing nothing.
     const NSTimeInterval kMouseModeAfterLinkDown = 10.0;
     const NSTimeInterval kLiveTimingWindow = 5.0;
-    // couchlink-host drops a session after 3 s of silence. An app in the
+    // inputline-host drops a session after 3 s of silence. An app in the
     // background does not run while the controller is idle, so after a longer
     // pause assume the session is gone and start a new one straight away.
     const NSTimeInterval kResumeAfterSilence = 2.5;
     const NSUInteger kMaxEvents = 200;
     const int kMaxControllers = 4;
 
-    NSString *const kKeychainService = @"Couchlink";
+    NSString *const kKeychainService = @"InputLine";
     // "-v2": pairings from before the safer pairing exchange are not used.
     NSString *const kKeychainAccount = @"pairings-v2";
-    NSString *const kAddressDefaultsKey = @"CLKPCAddress";
+    NSString *const kAddressDefaultsKey = @"ILNPCAddress";
     // Every address a PC answered on (home network, VPN...), newest first, by
     // host name; and the host last connected to. When the saved address stops
     // answering, the others are tried in turn.
-    NSString *const kKnownAddressesDefaultsKey = @"CLKKnownAddresses";
-    NSString *const kLastHostDefaultsKey = @"CLKLastHost";
+    NSString *const kKnownAddressesDefaultsKey = @"ILNKnownAddresses";
+    NSString *const kLastHostDefaultsKey = @"ILNLastHost";
     const NSUInteger kMaxKnownAddresses = 4;
     const NSTimeInterval kTryNextAddressAfter = 9.0;
-    NSString *const kRestoreIdentifier = @"com.evimore.Couchlink.bluetooth";
-    NSString *const kControllersDefaultsKey = @"CLKControllers";
+    NSString *const kRestoreIdentifier = @"com.evimore.InputLine.bluetooth";
+    NSString *const kControllersDefaultsKey = @"ILNControllers";
 
     const std::uint8_t kSettingLizardMode = 9;
 
@@ -151,13 +151,13 @@ namespace {
 
 }  // namespace
 
-@implementation CLKStatus
+@implementation ILNStatus
 @end
 
 #pragma mark - Per-controller state
 
-@interface CLKController : NSObject
-@property (nonatomic, strong) CLKTritonDevice *device;
+@interface ILNController : NSObject
+@property (nonatomic, strong) ILNTritonDevice *device;
 @property (nonatomic, assign) std::uint8_t linkIndex;
 @property (nonatomic, copy, nullable) NSString *serial;
 @property (nonatomic, copy, nullable) NSData *attributes;
@@ -172,22 +172,22 @@ namespace {
 @property (nonatomic, copy, nullable) NSData *previousReport;
 @end
 
-@implementation CLKController
+@implementation ILNController
 @end
 
-#pragma mark - CLKBridge
+#pragma mark - ILNBridge
 
-@interface CLKBridge () <CLKTritonBLEDelegate, CLKDiscoveryDelegate>
+@interface ILNBridge () <ILNTritonBLEDelegate, ILNDiscoveryDelegate>
 @end
 
-@implementation CLKBridge {
+@implementation ILNBridge {
     dispatch_queue_t _queue;
     dispatch_source_t _timer;
     dispatch_source_t _readSource;
     int _socket;
-    CLKTritonBLE *_ble;
-    CLKDiscovery *_discovery;               // main thread
-    NSArray<CLKDiscoveredPC *> *_discovered;  // link queue
+    ILNTritonBLE *_ble;
+    ILNDiscovery *_discovery;               // main thread
+    NSArray<ILNDiscoveredPC *> *_discovered;  // link queue
 
     NSString *_address;       // the one being tried
     NSString *_savedAddress;  // the user's choice, or where the PC last answered
@@ -195,7 +195,7 @@ namespace {
     CFAbsoluteTime _nextAddressTry;
     NSString *_hostName;
     NSString *_clientName;  // read once on the main thread
-    CLKLinkState _state;
+    ILNLinkState _state;
     CFAbsoluteTime _stateEnteredAt;
     CFAbsoluteTime _lastSend;
     CFAbsoluteTime _lastService;
@@ -216,7 +216,7 @@ namespace {
     NSString *_appVersion;
     std::vector<std::uint8_t> _pendingPairRequest;
 
-    NSMutableDictionary<NSUUID *, CLKController *> *_controllers;
+    NSMutableDictionary<NSUUID *, ILNController *> *_controllers;
 
     // Bluetooth report timing on this device, per app state.
     BOOL _inBackground;
@@ -237,10 +237,10 @@ namespace {
 
 + (instancetype)shared
 {
-    static CLKBridge *bridge;
+    static ILNBridge *bridge;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        bridge = [[CLKBridge alloc] initPrivate];
+        bridge = [[ILNBridge alloc] initPrivate];
     });
     return bridge;
 }
@@ -256,13 +256,13 @@ namespace {
         _eventTime = [[NSDateFormatter alloc] init];
         _eventTime.dateFormat = @"HH:mm:ss.SSS";
         NSString *deviceName = [UIDevice currentDevice].name;  // shared is first used on the main thread
-        _clientName = deviceName.length > 0 ? deviceName : @"Couchlink";
+        _clientName = deviceName.length > 0 ? deviceName : @"InputLine";
         _appVersion = [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"";
-        _queue = dispatch_queue_create("com.evimore.couchlink.link", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("com.evimore.inputline.link", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
         _address = [[NSUserDefaults standardUserDefaults] stringForKey:kAddressDefaultsKey];
         _savedAddress = _address;
-        _state = _address.length > 0 ? CLKLinkStateSearching : CLKLinkStateNoPC;
+        _state = _address.length > 0 ? ILNLinkStateSearching : ILNLinkStateNoPC;
         _inBackground = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
 
         NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
@@ -279,21 +279,21 @@ namespace {
         if (self->_timer != nil) {
             return;
         }
-        [self logEvent:launchedInBackground ? @"Couchlink started in the background (iOS launched it for a controller)"
-                                            : @"Couchlink started"];
+        [self logEvent:launchedInBackground ? @"InputLine started in the background (iOS launched it for a controller)"
+                                            : @"InputLine started"];
         if (self->_address.length > 0) {
             [self openSocket];
-            [self enterState:CLKLinkStateSearching];
+            [self enterState:ILNLinkStateSearching];
         }
         self->_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self->_queue);
         dispatch_source_set_timer(self->_timer, DISPATCH_TIME_NOW, (uint64_t)(kTickInterval * NSEC_PER_SEC), NSEC_PER_MSEC);
-        __weak CLKBridge *weakSelf = self;
+        __weak ILNBridge *weakSelf = self;
         dispatch_source_set_event_handler(self->_timer, ^{
             [weakSelf service];
         });
         dispatch_resume(self->_timer);
     });
-    _ble = [[CLKTritonBLE alloc] initWithDelegate:self restoreIdentifier:kRestoreIdentifier];
+    _ble = [[ILNTritonBLE alloc] initWithDelegate:self restoreIdentifier:kRestoreIdentifier];
     NSMutableArray<NSUUID *> *remembered = [NSMutableArray array];
     for (NSString *text in [[NSUserDefaults standardUserDefaults] stringArrayForKey:kControllersDefaultsKey]) {
         NSUUID *identifier = [[NSUUID alloc] initWithUUIDString:text];
@@ -304,7 +304,7 @@ namespace {
     _ble.rememberedIdentifiers = remembered;
     [_ble start];
 
-    _discovery = [[CLKDiscovery alloc] initWithDelegate:self];
+    _discovery = [[ILNDiscovery alloc] initWithDelegate:self];
     if ([UIApplication sharedApplication].applicationState != UIApplicationStateBackground) {
         [_discovery start];
     }
@@ -315,7 +315,7 @@ namespace {
     NSString *trimmed = [address stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     [[NSUserDefaults standardUserDefaults] setObject:trimmed forKey:kAddressDefaultsKey];
     dispatch_async(_queue, ^{
-        if (self->_state == CLKLinkStateConnected && self->_session) {
+        if (self->_state == ILNLinkStateConnected && self->_session) {
             [self detachAll];
             [self sendDatagram:self->_session->make_bye()];
         }
@@ -328,11 +328,11 @@ namespace {
         self->_everConnected = NO;
         [self closeSocket];
         if (trimmed.length == 0) {
-            [self enterState:CLKLinkStateNoPC];
+            [self enterState:ILNLinkStateNoPC];
             return;
         }
         [self openSocket];
-        [self enterState:CLKLinkStateSearching];
+        [self enterState:ILNLinkStateSearching];
     });
 }
 
@@ -354,19 +354,19 @@ namespace {
 
 #pragma mark - Discovery
 
-- (void)discoveryDidChange:(CLKDiscovery *)discovery
+- (void)discoveryDidChange:(ILNDiscovery *)discovery
 {
-    NSArray<CLKDiscoveredPC *> *pcs = discovery.pcs;
+    NSArray<ILNDiscoveredPC *> *pcs = discovery.pcs;
     dispatch_async(_queue, ^{
         self->_discovered = pcs;
         [self useDiscoveredPairedPC];
     });
 }
 
-- (void)discovery:(CLKDiscovery *)discovery didFailWithCode:(NSInteger)code
+- (void)discovery:(ILNDiscovery *)discovery didFailWithCode:(NSInteger)code
 {
     dispatch_async(_queue, ^{
-        [self logEvent:[NSString stringWithFormat:@"Cannot look for PCs on this network (error %ld). Is Local Network on for Couchlink in Settings?", (long)code]];
+        [self logEvent:[NSString stringWithFormat:@"Cannot look for PCs on this network (error %ld). Is Local Network on for InputLine in Settings?", (long)code]];
     });
 }
 
@@ -375,12 +375,12 @@ namespace {
 /// a PC whose local address changed. Link queue.
 - (void)useDiscoveredPairedPC
 {
-    if (_state != CLKLinkStateNoPC && _state != CLKLinkStateNotFound) {
+    if (_state != ILNLinkStateNoPC && _state != ILNLinkStateNotFound) {
         return;
     }
-    for (CLKDiscoveredPC *pc in _discovered) {
+    for (ILNDiscoveredPC *pc in _discovered) {
         link::Pairing pairing;
-        if ([pc.address isEqualToString:_address] || ![CLKBridge pairingForHostName:pc.name into:pairing]) {
+        if ([pc.address isEqualToString:_address] || ![ILNBridge pairingForHostName:pc.name into:pairing]) {
             continue;
         }
         [self logEvent:[NSString stringWithFormat:@"Found %@ on this network at %@", pc.name, pc.address]];
@@ -429,7 +429,7 @@ namespace {
     _session.reset();
     [self closeSocket];
     [self openSocket];
-    [self enterState:CLKLinkStateSearching];
+    [self enterState:ILNLinkStateSearching];
 }
 
 /// Connected: keep this address for the PC and make it the saved one. Link queue.
@@ -478,21 +478,21 @@ namespace {
 
 #pragma mark - Status
 
-- (CLKStatus *)status
+- (ILNStatus *)status
 {
-    __block CLKStatus *status = nil;
+    __block ILNStatus *status = nil;
     dispatch_sync(_queue, ^{
-        status = [[CLKStatus alloc] init];
+        status = [[ILNStatus alloc] init];
         status.linkState = self->_state;
         status.pcAddress = self->_address ?: @"";
         status.pcName = self->_hostName ?: @"";
         status.paused = self->_paused;
-        status.rttMs = self->_state == CLKLinkStateConnected ? self->_rttMs : -1;
+        status.rttMs = self->_state == ILNLinkStateConnected ? self->_rttMs : -1;
         status.linkText = [self linkText];
         NSMutableArray<NSString *> *controllers = [NSMutableArray array];
-        for (CLKController *controller in self->_controllers.allValues) {
+        for (ILNController *controller in self->_controllers.allValues) {
             NSString *state = self->_paused ? @"working with this device (disconnected from the PC)"
-                            : self->_state != CLKLinkStateConnected ? @"connected to this device"
+                            : self->_state != ILNLinkStateConnected ? @"connected to this device"
                             : controller.attached ? @"full Steam Input on the PC"
                             : @"plugging in on the PC...";
             [controllers addObject:[NSString stringWithFormat:@"%@: %@", controller.device.name, state]];
@@ -511,20 +511,20 @@ namespace {
 - (NSString *)linkText
 {
     switch (_state) {
-        case CLKLinkStateNoPC:
+        case ILNLinkStateNoPC:
             return @"Enter your gaming PC's address.";
-        case CLKLinkStateSearching:
-            return [NSString stringWithFormat:@"Looking for couchlink-host on %@...", _address];
-        case CLKLinkStateNotFound:
+        case ILNLinkStateSearching:
+            return [NSString stringWithFormat:@"Looking for inputline-host on %@...", _address];
+        case ILNLinkStateNotFound:
             if (_versionProblem != nil) {
                 return _versionProblem;
             }
-            return [NSString stringWithFormat:@"No answer from %@. Is couchlink-host running there, and is UDP %u allowed through its firewall? Still trying.", _address, link::kDefaultPort];
-        case CLKLinkStatePairing:
+            return [NSString stringWithFormat:@"No answer from %@. Is inputline-host running there, and is UDP %u allowed through its firewall? Still trying.", _address, link::kDefaultPort];
+        case ILNLinkStatePairing:
             return [NSString stringWithFormat:@"Pairing with %@: enter the code shown on its screen.", _hostName ?: _address];
-        case CLKLinkStateConnecting:
+        case ILNLinkStateConnecting:
             return [NSString stringWithFormat:@"Connecting to %@...", _hostName ?: _address];
-        case CLKLinkStateConnected: {
+        case ILNLinkStateConnected: {
             NSString *path = _viaTailscale ? @" through Tailscale" : @"";
             return _rttMs >= 0 ? [NSString stringWithFormat:@"Connected to %@%@ (round trip %.1f ms)", _hostName, path, _rttMs]
                                : [NSString stringWithFormat:@"Connected to %@%@", _hostName, path];
@@ -551,7 +551,7 @@ namespace {
         _events[_events.count - 1] = [NSString stringWithFormat:@"%@ (x%lu)", stamped, (unsigned long)(_eventRepeats + 1)];
         return;
     }
-    NSLog(@"Couchlink: %@", event);
+    NSLog(@"InputLine: %@", event);
     _lastEvent = event;
     _eventRepeats = 0;
     [_events addObject:stamped];
@@ -562,9 +562,9 @@ namespace {
 
 - (NSString *)report
 {
-    CLKStatus *status = [self status];
+    ILNStatus *status = [self status];
     NSMutableString *text = [NSMutableString string];
-    [text appendFormat:@"Couchlink %@ on %@ (iOS %@)\n", [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"],
+    [text appendFormat:@"InputLine %@ on %@ (iOS %@)\n", [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"],
                        [UIDevice currentDevice].model, [UIDevice currentDevice].systemVersion];
     [text appendFormat:@"Link: %@\n", status.linkText];
     [text appendFormat:@"Controllers: %@\n", status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"; "] : @"none"];
@@ -682,7 +682,7 @@ namespace {
     fcntl(_socket, F_SETFL, fcntl(_socket, F_GETFL) | O_NONBLOCK);
     const int fd = _socket;
     _readSource = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)fd, 0, _queue);
-    __weak CLKBridge *weakSelf = self;
+    __weak ILNBridge *weakSelf = self;
     dispatch_source_set_event_handler(_readSource, ^{
         std::uint8_t buffer[link::kMaxDatagram + 1];
         for (;;) {
@@ -731,32 +731,32 @@ namespace {
 
 #pragma mark - State machine (link queue)
 
-- (void)enterState:(CLKLinkState)state
+- (void)enterState:(ILNLinkState)state
 {
     if (state != _state) {
         static NSString *const names[] = {@"no PC", @"searching", @"not found", @"pairing", @"connecting", @"connected"};
         [self logEvent:[NSString stringWithFormat:@"Link: %@", names[state]]];
     }
-    if (state == CLKLinkStateConnected) {
+    if (state == ILNLinkStateConnected) {
         _linkDownSince = 0;
-    } else if (_state == CLKLinkStateConnected || _linkDownSince == 0) {
+    } else if (_state == ILNLinkStateConnected || _linkDownSince == 0) {
         _linkDownSince = CFAbsoluteTimeGetCurrent();
     }
     _state = state;
     _stateEnteredAt = CFAbsoluteTimeGetCurrent();
     _lastSend = 0;
     switch (state) {
-        case CLKLinkStateSearching:
+        case ILNLinkStateSearching:
             _probeNonce = RandomNonce();
             _nextAddressTry = _stateEnteredAt + kTryNextAddressAfter;
             break;
-        case CLKLinkStateConnecting:
+        case ILNLinkStateConnecting:
             _helloAttempts = 0;
             break;
-        case CLKLinkStateConnected:
+        case ILNLinkStateConnected:
             _everConnected = YES;
             _lastPong = CFAbsoluteTimeGetCurrent();
-            for (CLKController *controller in _controllers.allValues) {
+            for (ILNController *controller in _controllers.allValues) {
                 controller.attached = NO;
                 controller.lastAttachSent = 0;
             }
@@ -778,27 +778,27 @@ namespace {
     const CFAbsoluteTime inState = now - _stateEnteredAt;
 
     switch (_state) {
-        case CLKLinkStateNoPC:
+        case ILNLinkStateNoPC:
             break;
 
-        case CLKLinkStateSearching:
-        case CLKLinkStateNotFound:
-            if (_state == CLKLinkStateSearching && inState > kNotFoundAfter) {
-                _state = CLKLinkStateNotFound;  // keep the nonce; keep probing
+        case ILNLinkStateSearching:
+        case ILNLinkStateNotFound:
+            if (_state == ILNLinkStateSearching && inState > kNotFoundAfter) {
+                _state = ILNLinkStateNotFound;  // keep the nonce; keep probing
                 [self logEvent:[NSString stringWithFormat:@"Link: no answer from %@ yet", _address]];
                 [self useDiscoveredPairedPC];
             }
-            if (_state == CLKLinkStateNotFound && now >= _nextAddressTry) {
+            if (_state == ILNLinkStateNotFound && now >= _nextAddressTry) {
                 _nextAddressTry = now + kTryNextAddressAfter;
                 [self tryNextKnownAddress];
             }
-            if (now - _lastSend >= (_state == CLKLinkStateNotFound ? 2.0 : kProbeRetry)) {
+            if (now - _lastSend >= (_state == ILNLinkStateNotFound ? 2.0 : kProbeRetry)) {
                 _lastSend = now;
                 [self sendDatagram:link::ClientSession::make_probe(_probeNonce)];
             }
             break;
 
-        case CLKLinkStatePairing:
+        case ILNLinkStatePairing:
             if (now - _lastSend >= kPairRetry) {
                 _lastSend = now;
                 if (_pendingPairRequest.empty()) {
@@ -809,7 +809,7 @@ namespace {
             }
             break;
 
-        case CLKLinkStateConnecting:
+        case ILNLinkStateConnecting:
             if (now - _lastSend >= kHelloRetry) {
                 if (_helloAttempts >= kMaxHelloAttempts) {
                     if (!_everConnected) {
@@ -817,7 +817,7 @@ namespace {
                         // longer knows this device. Pair again.
                         [self beginPairing];
                     } else {
-                        [self enterState:CLKLinkStateSearching];
+                        [self enterState:ILNLinkStateSearching];
                     }
                     break;
                 }
@@ -827,17 +827,17 @@ namespace {
             }
             break;
 
-        case CLKLinkStateConnected:
+        case ILNLinkStateConnected:
             if (now - _lastPong > kLinkLostAfter) {
                 [self logEvent:@"Link: no answer from the PC for 4 s, reconnecting"];
-                [self enterState:CLKLinkStateConnecting];
+                [self enterState:ILNLinkStateConnecting];
                 break;
             }
             if (now - _lastPing >= kPingInterval) {
                 _lastPing = now;
                 [self sendDatagram:_session->make_ping(WallClockMicroseconds())];
             }
-            for (CLKController *controller in _controllers.allValues) {
+            for (ILNController *controller in _controllers.allValues) {
                 if (!self->_paused && !controller.attached && controller.identified && now - controller.lastAttachSent >= kAttachRetry) {
                     [self sendAttach:controller];
                 }
@@ -848,8 +848,8 @@ namespace {
     // While the controller goes to the PC, keep it out of its built-in
     // keyboard/mouse mode (it would also move this device's pointer). Otherwise
     // hand that mode back.
-    const BOOL toPC = !_paused && (_state == CLKLinkStateConnected || (_linkDownSince > 0 && now - _linkDownSince < kMouseModeAfterLinkDown));
-    for (CLKController *controller in _controllers.allValues) {
+    const BOOL toPC = !_paused && (_state == ILNLinkStateConnected || (_linkDownSince > 0 && now - _linkDownSince < kMouseModeAfterLinkDown));
+    for (ILNController *controller in _controllers.allValues) {
         if (toPC) {
             if (controller.mouseModeOn || now - controller.lastLizardSent >= kLizardInterval) {
                 controller.lastLizardSent = now;
@@ -874,8 +874,8 @@ namespace {
 - (void)handleDatagram:(const std::uint8_t *)data length:(size_t)length
 {
     switch (_state) {
-        case CLKLinkStateSearching:
-        case CLKLinkStateNotFound: {
+        case ILNLinkStateSearching:
+        case ILNLinkStateNotFound: {
             const auto reply = link::ClientSession::parse_probe_reply(data, length, _probeNonce);
             if (!reply) {
                 return;
@@ -888,10 +888,10 @@ namespace {
             NSString *problem = nil;
             switch (link::check_compatibility(*reply)) {
                 case link::Compatibility::kUpdateHost:
-                    problem = [NSString stringWithFormat:@"%@ runs Couchlink %@, which is older than this app. Install the latest Couchlink on the PC.", _hostName, hostVersion];
+                    problem = [NSString stringWithFormat:@"%@ runs InputLine %@, which is older than this app. Install the latest InputLine on the PC.", _hostName, hostVersion];
                     break;
                 case link::Compatibility::kUpdateClient:
-                    problem = [NSString stringWithFormat:@"%@ runs Couchlink %@, which needs a newer version of this app. Update the app.", _hostName, hostVersion];
+                    problem = [NSString stringWithFormat:@"%@ runs InputLine %@, which needs a newer version of this app. Update the app.", _hostName, hostVersion];
                     break;
                 case link::Compatibility::kCompatible:
                     break;
@@ -901,12 +901,12 @@ namespace {
                     [self logEvent:problem];
                 }
                 _versionProblem = problem;
-                _state = CLKLinkStateNotFound;  // keep probing: it connects once updated
+                _state = ILNLinkStateNotFound;  // keep probing: it connects once updated
                 return;
             }
             _versionProblem = nil;
             link::Pairing pairing;
-            if ([CLKBridge pairingForHostName:_hostName into:pairing]) {
+            if ([ILNBridge pairingForHostName:_hostName into:pairing]) {
                 [self startSessionWithPairing:pairing];
             } else {
                 [self beginPairing];
@@ -914,7 +914,7 @@ namespace {
             return;
         }
 
-        case CLKLinkStatePairing: {
+        case ILNLinkStatePairing: {
             if (_pendingPairRequest.empty()) {
                 const auto reply = link::ClientSession::parse_probe_reply(data, length, _pairingAttempt.nonce);
                 if (reply && reply->pairing_open) {
@@ -924,7 +924,7 @@ namespace {
                     _codeRequested = YES;
                     NSString *message = reply->pairing_open
                         ? [NSString stringWithFormat:@"%@ is showing a 6-digit code on its screen. Not at the PC? Open your streaming app to see its screen, then come back here and enter the code.", _hostName]
-                        : [NSString stringWithFormat:@"%@ is not accepting new devices. Run 'couchlink-host pair' on it, then enter the code it shows.", _hostName];
+                        : [NSString stringWithFormat:@"%@ is not accepting new devices. Run 'inputline-host pair' on it, then enter the code it shows.", _hostName];
                     [self askForCode:message];
                 }
                 return;
@@ -935,7 +935,7 @@ namespace {
             }
             if (*result) {
                 const link::Pairing pairing = _pairingAttempt.pairing();
-                [CLKBridge savePairing:pairing forHostName:_hostName];
+                [ILNBridge savePairing:pairing forHostName:_hostName];
                 [self tellUser:[NSString stringWithFormat:@"Paired with %@.", _hostName]];
                 [self startSessionWithPairing:pairing];
             } else {
@@ -945,8 +945,8 @@ namespace {
             return;
         }
 
-        case CLKLinkStateConnecting:
-        case CLKLinkStateConnected: {
+        case ILNLinkStateConnecting:
+        case ILNLinkStateConnected: {
             if (!_session) {
                 return;
             }
@@ -957,7 +957,7 @@ namespace {
             return;
         }
 
-        case CLKLinkStateNoPC:
+        case ILNLinkStateNoPC:
             return;
     }
 }
@@ -965,7 +965,7 @@ namespace {
 - (void)startSessionWithPairing:(const link::Pairing &)pairing
 {
     _session = std::make_unique<link::ClientSession>(pairing, ToStdString([self clientName]), SecureRandom, ToStdString(_appVersion));
-    [self enterState:CLKLinkStateConnecting];
+    [self enterState:ILNLinkStateConnecting];
 }
 
 - (void)handleSessionEvent:(const link::ClientSession::Event &)event
@@ -973,14 +973,14 @@ namespace {
     using EventType = link::ClientSession::EventType;
     switch (event.type) {
         case EventType::kHelloAck:
-            if (_state != CLKLinkStateConnected) {
-                [self enterState:CLKLinkStateConnected];
+            if (_state != ILNLinkStateConnected) {
+                [self enterState:ILNLinkStateConnected];
                 [self rememberWorkingAddress];
             }
             break;
 
         case EventType::kAttachAck:
-            for (CLKController *controller in _controllers.allValues) {
+            for (ILNController *controller in _controllers.allValues) {
                 if (controller.linkIndex != event.attach_ack.controller) {
                     continue;
                 }
@@ -993,7 +993,7 @@ namespace {
             break;
 
         case EventType::kNeedAttach:
-            for (CLKController *controller in _controllers.allValues) {
+            for (ILNController *controller in _controllers.allValues) {
                 if (controller.linkIndex == event.need_attach.controller) {
                     controller.attached = NO;
                     controller.lastAttachSent = 0;
@@ -1007,7 +1007,7 @@ namespace {
             break;
 
         case EventType::kHidOutput:
-            for (CLKController *controller in _controllers.allValues) {
+            for (ILNController *controller in _controllers.allValues) {
                 if (controller.linkIndex != event.output.controller) {
                     continue;
                 }
@@ -1041,7 +1041,7 @@ namespace {
     }
 }
 
-- (void)sendAttach:(CLKController *)controller
+- (void)sendAttach:(ILNController *)controller
 {
     link::Attach attach;
     attach.controller = controller.linkIndex;
@@ -1065,10 +1065,10 @@ namespace {
         }
         self->_paused = paused;
         if (paused) {
-            if (self->_state == CLKLinkStateConnected && self->_session) {
+            if (self->_state == ILNLinkStateConnected && self->_session) {
                 [self detachAll];
             }
-            for (CLKController *controller in self->_controllers.allValues) {
+            for (ILNController *controller in self->_controllers.allValues) {
                 controller.attached = NO;
             }
             [self logEvent:@"Disconnected: the controller works with this device until you tap Connect or switch it off and on"];
@@ -1084,7 +1084,7 @@ namespace {
     // Best effort: iOS gives little time, and nothing at all when it ends a
     // suspended app. Switching the controller off and on restores it too.
     dispatch_sync(_queue, ^{
-        for (CLKController *controller in self->_controllers.allValues) {
+        for (ILNController *controller in self->_controllers.allValues) {
             [controller.device sendFeatureReport:SettingReport(kSettingLizardMode, 1)];
         }
     });
@@ -1092,7 +1092,7 @@ namespace {
 
 - (void)detachAll
 {
-    for (CLKController *controller in _controllers.allValues) {
+    for (ILNController *controller in _controllers.allValues) {
         [self sendDatagram:_session->make_detach(controller.linkIndex)];
     }
 }
@@ -1111,7 +1111,7 @@ namespace {
     _pendingPairRequest.clear();
     _codeRequested = NO;
     _session.reset();
-    [self enterState:CLKLinkStatePairing];
+    [self enterState:ILNLinkStatePairing];
 }
 
 - (void)askForCode:(NSString *)message
@@ -1124,7 +1124,7 @@ namespace {
 - (void)submitPairingCode:(NSString *)text
 {
     dispatch_async(_queue, ^{
-        if (self->_state != CLKLinkStatePairing) {
+        if (self->_state != ILNLinkStatePairing) {
             return;
         }
         NSMutableString *digits = [NSMutableString string];
@@ -1150,10 +1150,10 @@ namespace {
 - (void)cancelPairing
 {
     dispatch_async(_queue, ^{
-        if (self->_state == CLKLinkStatePairing) {
+        if (self->_state == ILNLinkStatePairing) {
             // Try again later by tapping Connect.
             [self closeSocket];
-            [self enterState:CLKLinkStateNoPC];  // Connect tries again
+            [self enterState:ILNLinkStateNoPC];  // Connect tries again
         }
     });
 }
@@ -1164,7 +1164,7 @@ namespace {
 {
     for (std::uint8_t index = 0; index < kMaxControllers; ++index) {
         BOOL used = NO;
-        for (CLKController *controller in _controllers.allValues) {
+        for (ILNController *controller in _controllers.allValues) {
             used |= controller.linkIndex == index;
         }
         if (!used) {
@@ -1187,12 +1187,12 @@ namespace {
     }
 }
 
-- (void)identify:(CLKController *)controller
+- (void)identify:(ILNController *)controller
 {
     // GET_STRING_ATTRIBUTE (0xAE) index 1: the unit serial, which Steam keys
     // settings by and the PC uses to recognise the controller after a drop.
     const std::uint8_t serialRequest[] = {0x01, 0xAE, 0x01, 0x01};
-    __weak CLKController *weakController = controller;
+    __weak ILNController *weakController = controller;
     [controller.device queryFeatureReport:[NSData dataWithBytes:serialRequest length:sizeof(serialRequest)] completion:^(NSData *reply) {
         NSString *serial = nil;
         const std::uint8_t *bytes = (const std::uint8_t *)reply.bytes;
@@ -1205,7 +1205,7 @@ namespace {
             const std::uint8_t *a = (const std::uint8_t *)attributes.bytes;
             NSData *valid = (attributes.length > 3 && a[1] == 0x83) ? attributes : nil;
             dispatch_async(self->_queue, ^{
-                CLKController *strong = weakController;
+                ILNController *strong = weakController;
                 strong.serial = serial;
                 strong.attributes = valid;
                 strong.identified = YES;
@@ -1214,9 +1214,9 @@ namespace {
     }];
 }
 
-#pragma mark - CLKTritonBLEDelegate (Bluetooth queue)
+#pragma mark - ILNTritonBLEDelegate (Bluetooth queue)
 
-- (void)tritonDidBecomeReady:(CLKTritonDevice *)device
+- (void)tritonDidBecomeReady:(ILNTritonDevice *)device
 {
     dispatch_async(_queue, ^{
         if (self->_controllers[device.identifier] != nil) {
@@ -1226,7 +1226,7 @@ namespace {
         if (index >= kMaxControllers) {
             return;
         }
-        CLKController *controller = [[CLKController alloc] init];
+        ILNController *controller = [[ILNController alloc] init];
         controller.device = device;
         controller.linkIndex = index;
         self->_controllers[device.identifier] = controller;
@@ -1245,10 +1245,10 @@ namespace {
     });
 }
 
-- (void)tritonDidDisconnect:(CLKTritonDevice *)device
+- (void)tritonDidDisconnect:(ILNTritonDevice *)device
 {
     dispatch_async(_queue, ^{
-        CLKController *controller = self->_controllers[device.identifier];
+        ILNController *controller = self->_controllers[device.identifier];
         if (controller == nil) {
             return;
         }
@@ -1256,7 +1256,7 @@ namespace {
         [self logEvent:[NSString stringWithFormat:@"Controller disconnected: %@", error != nil
                             ? [NSString stringWithFormat:@"%@ (CoreBluetooth error %ld)", error.localizedDescription, (long)error.code]
                             : @"no reason given"]];
-        if (self->_state == CLKLinkStateConnected && self->_session) {
+        if (self->_state == ILNLinkStateConnected && self->_session) {
             // The PC keeps the virtual controller plugged in for a while, in
             // case this was a Bluetooth hiccup.
             [self sendDatagram:self->_session->make_detach(controller.linkIndex)];
@@ -1268,11 +1268,11 @@ namespace {
 - (void)tritonBluetoothUnauthorized
 {
     dispatch_async(_queue, ^{
-        [self tellUser:@"Couchlink needs Bluetooth. Allow it in Settings > Couchlink."];
+        [self tellUser:@"InputLine needs Bluetooth. Allow it in Settings > InputLine."];
     });
 }
 
-- (void)triton:(CLKTritonDevice *)device didReceiveReport:(const uint8_t *)report length:(size_t)length
+- (void)triton:(ILNTritonDevice *)device didReceiveReport:(const uint8_t *)report length:(size_t)length
 {
     const std::uint64_t arrived = MonotonicMicroseconds();
     NSData *copy = [NSData dataWithBytes:report length:length];
@@ -1280,13 +1280,13 @@ namespace {
         (self->_inBackground ? self->_timingBackground : self->_timingForeground).add(arrived);
         self->_timingLive.add(arrived);
 
-        CLKController *controller = self->_controllers[device.identifier];
+        ILNController *controller = self->_controllers[device.identifier];
         const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
-        if (self->_state == CLKLinkStateConnected && now - self->_lastDatagramSent > kResumeAfterSilence) {
+        if (self->_state == ILNLinkStateConnected && now - self->_lastDatagramSent > kResumeAfterSilence) {
             [self logEvent:[NSString stringWithFormat:@"Resuming after %.1f s of silence: starting a new session", now - self->_lastDatagramSent]];
-            [self enterState:CLKLinkStateConnecting];
+            [self enterState:ILNLinkStateConnecting];
         }
-        if (controller != nil && self->_state == CLKLinkStateConnected && controller.attached && !self->_paused) {
+        if (controller != nil && self->_state == ILNLinkStateConnected && controller.attached && !self->_paused) {
             controller.sequence += 1;
             NSData *previous = controller.previousReport;
             [self sendDatagram:self->_session->make_input_bundle(controller.linkIndex, controller.sequence, (const std::uint8_t *)copy.bytes, copy.length,

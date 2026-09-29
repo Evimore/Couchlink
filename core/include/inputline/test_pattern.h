@@ -14,7 +14,7 @@
 #include <array>
 #include <cstdint>
 
-namespace couchlink {
+namespace inputline {
 
   class TestPattern {
   public:
@@ -25,4 +25,4 @@ namespace couchlink {
     std::uint8_t seq_ = 0;
   };
 
-}  // namespace couchlink
+}  // namespace inputline

@@ -17,7 +17,7 @@
   #include <wtsapi32.h>
 #endif
 
-namespace couchlink::desktop {
+namespace inputline::desktop {
 
 #ifdef _WIN32
 
@@ -114,12 +114,12 @@ namespace couchlink::desktop {
 
     const char *const kCommonScript =
       "$ErrorActionPreference = 'Stop'\n"
-      "$name = 'Couchlink'\n"
-      "$dir = Join-Path $env:ProgramFiles 'Couchlink'\n"
-      "$exe = Join-Path $dir 'couchlink-host.exe'\n"
+      "$name = 'InputLine'\n"
+      "$dir = Join-Path $env:ProgramFiles 'InputLine'\n"
+      "$exe = Join-Path $dir 'inputline-host.exe'\n"
       "function Stop-Installed {\n"
       "  Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue\n"
-      "  Get-Process couchlink-host -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force\n"
+      "  Get-Process inputline-host -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe } | Stop-Process -Force\n"
       "  Start-Sleep -Milliseconds 500\n"
       "}\n";
   }  // namespace
@@ -130,7 +130,7 @@ namespace couchlink::desktop {
       spaced.insert(3, " ");
     }
     const std::wstring text = widen(
-      client_name + " wants to connect a Steam Controller to this PC with Couchlink.\n\n"
+      client_name + " wants to connect a Steam Controller to this PC with InputLine.\n\n"
                     "Enter this code on it:\n\n"
                     "        " +
       spaced +
@@ -145,7 +145,7 @@ namespace couchlink::desktop {
         log::warn("pairing: nobody is signed in to this PC to see the code");
         return;
       }
-      std::wstring title = L"Couchlink";
+      std::wstring title = L"InputLine";
       std::wstring message = text;
       DWORD response = 0;
       if (!WTSSendMessageW(
@@ -158,7 +158,7 @@ namespace couchlink::desktop {
       return;
     }
     std::thread([text] {
-      MessageBoxW(nullptr, text.c_str(), L"Couchlink", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
+      MessageBoxW(nullptr, text.c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
     }).detach();
   }
 
@@ -180,7 +180,7 @@ namespace couchlink::desktop {
 
   std::string data_dir() {
     const char *base = std::getenv("ProgramData");
-    return std::string(base && *base ? base : "C:\\ProgramData") + "\\Couchlink";
+    return std::string(base && *base ? base : "C:\\ProgramData") + "\\InputLine";
   }
 
   namespace {
@@ -318,7 +318,7 @@ namespace couchlink::desktop {
     if (!StartServiceCtrlDispatcherW(table)) {
       g_service_mode = false;
       if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
-        std::fprintf(stderr, "'couchlink-host service' is started by Windows (the Couchlink installer sets it up). In a terminal, use 'couchlink-host run'.\n");
+        std::fprintf(stderr, "'inputline-host service' is started by Windows (the InputLine installer sets it up). In a terminal, use 'inputline-host run'.\n");
       }
       return 1;
     }
@@ -327,17 +327,17 @@ namespace couchlink::desktop {
 
   int install(const InstallOptions &options) {
     if (service_installed()) {
-      std::fprintf(stderr, "Couchlink is installed with its installer and already runs in the background. Nothing to do.\n");
+      std::fprintf(stderr, "InputLine is installed with its installer and already runs in the background. Nothing to do.\n");
       return 1;
     }
     if (!is_elevated()) {
-      std::fprintf(stderr, "Run 'couchlink-host install' from an administrator terminal (Terminal (Admin)).\n");
+      std::fprintf(stderr, "Run 'inputline-host install' from an administrator terminal (Terminal (Admin)).\n");
       return 1;
     }
 
     prepare_data_dirs();
     const std::string log_dir = data_dir();
-    std::string arguments = "run --hide-console --log " + arg_quote(log_dir + "\\couchlink-host.log");
+    std::string arguments = "run --hide-console --log " + arg_quote(log_dir + "\\inputline-host.log");
     for (const auto &arg : options.run_arguments) {
       arguments += " " + arg_quote(arg);
     }
@@ -373,9 +373,9 @@ namespace couchlink::desktop {
     }
     std::printf(
       "\nAll set. Nothing else to run on this PC.\n"
-      "To pair an iPad or iPhone: open Couchlink on it, enter this PC's address and tap Connect.\n"
-      "A 6-digit code then pops up on this PC's screen; type it into Couchlink.\n"
-      "Log: %s\\couchlink-host.log\n",
+      "To pair an iPad or iPhone: open InputLine on it, enter this PC's address and tap Connect.\n"
+      "A 6-digit code then pops up on this PC's screen; type it into InputLine.\n"
+      "Log: %s\\inputline-host.log\n",
       log_dir.c_str()
     );
     return 0;
@@ -383,11 +383,11 @@ namespace couchlink::desktop {
 
   int uninstall() {
     if (service_installed()) {
-      std::fprintf(stderr, "Couchlink was installed with its installer: remove it in Settings > Apps > Installed apps.\n");
+      std::fprintf(stderr, "InputLine was installed with its installer: remove it in Settings > Apps > Installed apps.\n");
       return 1;
     }
     if (!is_elevated()) {
-      std::fprintf(stderr, "Run 'couchlink-host uninstall' from an administrator terminal (Terminal (Admin)).\n");
+      std::fprintf(stderr, "Run 'inputline-host uninstall' from an administrator terminal (Terminal (Admin)).\n");
       return 1;
     }
     std::string script = kCommonScript;
@@ -423,12 +423,12 @@ namespace couchlink::desktop {
   }
 
   int run_service(const std::function<int()> &, const std::function<void()> &) {
-    std::fprintf(stderr, "'service' is for Windows. On Linux, run 'couchlink-host run' from a systemd unit.\n");
+    std::fprintf(stderr, "'service' is for Windows. On Linux, run 'inputline-host run' from a systemd unit.\n");
     return 1;
   }
 
   int install(const InstallOptions &) {
-    std::fprintf(stderr, "'install' is for Windows. On Linux, run 'couchlink-host run' as root from a systemd unit.\n");
+    std::fprintf(stderr, "'install' is for Windows. On Linux, run 'inputline-host run' as root from a systemd unit.\n");
     return 1;
   }
 
@@ -439,4 +439,4 @@ namespace couchlink::desktop {
 
 #endif
 
-}  // namespace couchlink::desktop
+}  // namespace inputline::desktop

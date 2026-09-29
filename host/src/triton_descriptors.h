@@ -12,7 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace couchlink::triton_usb {
+namespace inputline::triton_usb {
 
   // USB 2.0, full speed, VID 28DE, PID 1302, bcdDevice 1.00, 1 configuration
   inline constexpr std::uint8_t kDeviceDescriptor[] = {
@@ -73,4 +73,4 @@ namespace couchlink::triton_usb {
   inline constexpr std::size_t kHidDescriptorOffset = 18;
   inline constexpr std::size_t kHidDescriptorLength = 9;
 
-}  // namespace couchlink::triton_usb
+}  // namespace inputline::triton_usb

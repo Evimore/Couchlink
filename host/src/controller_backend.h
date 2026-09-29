@@ -8,15 +8,15 @@
  */
 #pragma once
 
-#include "couchlink/feature_responder.h"
-#include "couchlink/link_protocol.h"
+#include "inputline/feature_responder.h"
+#include "inputline/link_protocol.h"
 #include "usbip_attach.h"
 
 #include <functional>
 #include <memory>
 #include <set>
 
-namespace couchlink {
+namespace inputline {
 
   namespace usbip {
     class Server;
@@ -68,4 +68,4 @@ namespace couchlink {
     UsbipBackendOptions options_;
   };
 
-}  // namespace couchlink
+}  // namespace inputline

@@ -1,5 +1,5 @@
-# XcodeGen spec: `xcodegen generate` turns this into Couchlink.xcodeproj.
-name: Couchlink
+# XcodeGen spec: `xcodegen generate` turns this into InputLine.xcodeproj.
+name: InputLine
 options:
   bundleIdPrefix: com.evimore
   deploymentTarget:
@@ -14,7 +14,7 @@ settings:
     GCC_WARN_UNUSED_VARIABLE: YES
     ENABLE_BITCODE: NO
 targets:
-  Couchlink:
+  InputLine:
     type: application
     platform: iOS
     sources:
@@ -26,7 +26,7 @@ targets:
         buildPhase: none
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.evimore.Couchlink
+        PRODUCT_BUNDLE_IDENTIFIER: com.evimore.InputLine
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1,2"
         HEADER_SEARCH_PATHS:
@@ -36,16 +36,16 @@ targets:
     info:
       path: Generated/Info.plist
       properties:
-        CFBundleDisplayName: Couchlink
+        CFBundleDisplayName: InputLine
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiresFullScreen: false
         UIBackgroundModes:
           - bluetooth-central
-        NSBluetoothAlwaysUsageDescription: Couchlink connects to your Steam Controller over Bluetooth and forwards it to your gaming PC.
-        NSLocalNetworkUsageDescription: Couchlink finds your gaming PC on the network and sends your controller's input to it.
+        NSBluetoothAlwaysUsageDescription: InputLine connects to your Steam Controller over Bluetooth and forwards it to your gaming PC.
+        NSLocalNetworkUsageDescription: InputLine finds your gaming PC on the network and sends your controller's input to it.
         NSBonjourServices:
-          - _couchlink._udp
+          - _inputline._udp
         ITSAppUsesNonExemptEncryption: false
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

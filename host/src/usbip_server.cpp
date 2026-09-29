@@ -6,7 +6,7 @@
 #include <cstring>
 #include <deque>
 
-namespace couchlink::usbip {
+namespace inputline::usbip {
 
   using namespace proto;
 
@@ -92,7 +92,7 @@ namespace couchlink::usbip {
 
     void put_usb_device(std::vector<std::uint8_t> &out, const std::string &busid, std::uint32_t devnum, const DeviceSummary &s) {
       char path[256] = {};
-      std::snprintf(path, sizeof(path), "/sys/devices/platform/couchlink/usb1/%s", busid.c_str());
+      std::snprintf(path, sizeof(path), "/sys/devices/platform/inputline/usb1/%s", busid.c_str());
       out.insert(out.end(), path, path + sizeof(path));
       char bus[32] = {};
       std::snprintf(bus, sizeof(bus), "%s", busid.c_str());
@@ -549,4 +549,4 @@ namespace couchlink::usbip {
     attach_callback_ = std::move(callback);
   }
 
-}  // namespace couchlink::usbip
+}  // namespace inputline::usbip

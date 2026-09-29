@@ -67,7 +67,7 @@ jobs:
         run: |
           $log = Join-Path $env:RUNNER_TEMP 'host.log'
           $config = Join-Path $env:RUNNER_TEMP 'clients.conf'
-          $host_process = Start-Process -FilePath build/host/Release/couchlink-host.exe -PassThru -NoNewWindow `
+          $host_process = Start-Process -FilePath build/host/Release/inputline-host.exe -PassThru -NoNewWindow `
             -ArgumentList @('run', '--no-attach', '--verbose', '--config', $config, '--log', $log)
           Start-Sleep -Seconds 6
           Stop-Process -Id $host_process.Id -Force
@@ -83,9 +83,9 @@ jobs:
       # Two versions of the same build, to test upgrading from one to the other.
       - name: Build the installer
         run: |
-          foreach ($build in @(@{ Version = "0.0.${{ github.run_number }}"; Out = 'Couchlink-Setup-old.msi' },
-                               @{ Version = "0.1.${{ github.run_number }}"; Out = 'Couchlink-Setup.msi' })) {
-            wix build installer/windows/Couchlink.wxs -arch x64 `
+          foreach ($build in @(@{ Version = "0.0.${{ github.run_number }}"; Out = 'InputLine-Setup-old.msi' },
+                               @{ Version = "0.1.${{ github.run_number }}"; Out = 'InputLine-Setup.msi' })) {
+            wix build installer/windows/InputLine.wxs -arch x64 `
               -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
               -d "Version=$($build.Version)" -d BinDir=build/host/Release `
               -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}" `
@@ -105,54 +105,56 @@ jobs:
             if (-not $ok) { Write-Host "::error::$what"; exit 1 }
             Write-Host "ok: $what"
           }
-          $data = Join-Path $env:ProgramData 'Couchlink'
+          $data = Join-Path $env:ProgramData 'InputLine'
 
-          # Pairings from an earlier 'couchlink-host install' come along.
-          New-Item -ItemType Directory -Force (Join-Path $env:APPDATA 'Couchlink') | Out-Null
-          Set-Content (Join-Path $env:APPDATA 'Couchlink\couchlink-host.conf') '# pairings from before the installer'
+          # Existing pairings, and a setup made by hand under the earlier name.
           Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force (Join-Path $data 'pairing') | Out-Null
+          Set-Content (Join-Path $data 'pairing\inputline-host.conf') '# paired devices'
+          Register-ScheduledTask -TaskName Couchlink -Action (New-ScheduledTaskAction -Execute cmd.exe -Argument '/c exit') -Force | Out-Null
 
-          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-nousbip.log')
+          $code = Invoke-Msi @('/i', 'InputLine-Setup.msi', '/qn', '/l*v', 'msi-nousbip.log')
           Check ($code -eq 1603) "refuses to install without usbip-win2 (exit $code)"
 
-          $code = Invoke-Msi @('/i', 'Couchlink-Setup-old.msi', '/qn', '/l*v', 'msi-install.log', 'SKIPUSBIPCHECK=1')
+          $code = Invoke-Msi @('/i', 'InputLine-Setup-old.msi', '/qn', '/l*v', 'msi-install.log', 'SKIPUSBIPCHECK=1')
           if ($code -ne 0) { Get-Content msi-install.log -Tail 80 }
           Check ($code -eq 0) "installs (exit $code)"
           Start-Sleep -Seconds 6
-          $log = Join-Path $data 'couchlink-host.log'
+          $log = Join-Path $data 'inputline-host.log'
           Get-Content $log
-          Check ((Get-Service Couchlink).Status -eq 'Running') 'the Couchlink service runs'
-          Check ((Get-Service Couchlink).StartType -eq 'Automatic') 'the service starts with Windows'
+          Check ((Get-Service InputLine).Status -eq 'Running') 'the InputLine service runs'
+          Check ((Get-Service InputLine).StartType -eq 'Automatic') 'the service starts with Windows'
           Check (Select-String -Path $log -Pattern 'starting as a Windows service' -Quiet) 'the service logs to ProgramData'
           Check (Select-String -Path $log -Pattern 'listening on UDP port 48150' -Quiet) 'the service listens on the link port'
-          Check ($null -ne (Get-NetFirewallRule -DisplayName 'Couchlink (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule exists'
-          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'earlier pairings were moved to ProgramData'
+          Check ($null -ne (Get-NetFirewallRule -DisplayName 'InputLine (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule exists'
+          Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'existing pairings are kept'
+          Check ($null -eq (Get-ScheduledTask -TaskName Couchlink -ErrorAction SilentlyContinue)) 'the setup under the earlier name is removed'
           $acl = (icacls (Join-Path $data 'pairing')) -join "`n"
           Write-Host $acl
           Check (-not ($acl -match 'BUILTIN\\Users')) 'users cannot read the pairing keys'
-          $failure = (sc.exe qfailure Couchlink) -join "`n"
+          $failure = (sc.exe qfailure InputLine) -join "`n"
           Check ($failure -match 'RESTART') 'the service restarts after a failure'
-          Check (Test-Path "$env:ProgramFiles\Couchlink\couchlink-host.exe") 'couchlink-host.exe is in Program Files'
+          Check (Test-Path "$env:ProgramFiles\InputLine\inputline-host.exe") 'inputline-host.exe is in Program Files'
 
-          $code = Invoke-Msi @('/fa', 'Couchlink-Setup-old.msi', '/qn', '/l*v', 'msi-repair.log')
+          $code = Invoke-Msi @('/fa', 'InputLine-Setup-old.msi', '/qn', '/l*v', 'msi-repair.log')
           Check ($code -eq 0) "repairs (exit $code)"
           Start-Sleep -Seconds 3
-          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after a repair'
+          Check ((Get-Service InputLine).Status -eq 'Running') 'the service runs after a repair'
 
-          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-upgrade.log', 'SKIPUSBIPCHECK=1')
+          $code = Invoke-Msi @('/i', 'InputLine-Setup.msi', '/qn', '/l*v', 'msi-upgrade.log', 'SKIPUSBIPCHECK=1')
           Check ($code -eq 0) "upgrades to the newer version (exit $code)"
           Start-Sleep -Seconds 4
-          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after upgrading'
-          $installed = @(Get-CimInstance Win32_Product -Filter "Name = 'Couchlink'")
-          Check ($installed.Count -eq 1 -and $installed[0].Version -like '0.1.*') "exactly one Couchlink is installed, the newer one ($($installed.Version -join ', '))"
-          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'pairings survive the upgrade'
+          Check ((Get-Service InputLine).Status -eq 'Running') 'the service runs after upgrading'
+          $installed = @(Get-CimInstance Win32_Product -Filter "Name = 'InputLine'")
+          Check ($installed.Count -eq 1 -and $installed[0].Version -like '0.1.*') "exactly one InputLine is installed, the newer one ($($installed.Version -join ', '))"
+          Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'pairings survive the upgrade'
 
-          $code = Invoke-Msi @('/x', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-uninstall.log')
+          $code = Invoke-Msi @('/x', 'InputLine-Setup.msi', '/qn', '/l*v', 'msi-uninstall.log')
           Check ($code -eq 0) "uninstalls (exit $code)"
-          Check ($null -eq (Get-Service Couchlink -ErrorAction SilentlyContinue)) 'the service is gone'
-          Check ($null -eq (Get-NetFirewallRule -DisplayName 'Couchlink (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule is gone'
-          Check (-not (Test-Path "$env:ProgramFiles\Couchlink\couchlink-host.exe")) 'the program is gone'
-          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'pairings are kept for a later install'
+          Check ($null -eq (Get-Service InputLine -ErrorAction SilentlyContinue)) 'the service is gone'
+          Check ($null -eq (Get-NetFirewallRule -DisplayName 'InputLine (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule is gone'
+          Check (-not (Test-Path "$env:ProgramFiles\InputLine\inputline-host.exe")) 'the program is gone'
+          Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'pairings are kept for a later install'
       - name: Installer logs
         if: failure()
         shell: pwsh
@@ -160,15 +162,15 @@ jobs:
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: couchlink-windows-x64
+          name: inputline-windows-x64
           path: |
-            build/host/Release/couchlink-host.exe
-            build/host/Release/couchlink-sim.exe
+            build/host/Release/inputline-host.exe
+            build/host/Release/inputline-sim.exe
       - name: Upload the installer
         uses: actions/upload-artifact@v4
         with:
-          name: Couchlink-Setup.msi
-          path: Couchlink-Setup.msi
+          name: InputLine-Setup.msi
+          path: InputLine-Setup.msi
 
   macos:
     name: macOS
@@ -182,38 +184,38 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
-  couchlink-ios:
-    name: Couchlink (iOS)
+  inputline-ios:
+    name: InputLine (iOS)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Generate the Xcode project
-        working-directory: clients/couchlink-ios
+        working-directory: clients/inputline-ios
         run: xcodegen generate
       - name: Build
-        working-directory: clients/couchlink-ios
+        working-directory: clients/inputline-ios
         run: >
           set -o pipefail &&
-          xcodebuild -project Couchlink.xcodeproj -target Couchlink
+          xcodebuild -project InputLine.xcodeproj -target InputLine
           -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/out"
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
           build | tail -n 80
       # Unsigned: a sideloading tool (Sideloadly, AltStore) signs it with your Apple ID.
       - name: Package unsigned .ipa
         run: |
-          app="$RUNNER_TEMP/out/Release-iphoneos/Couchlink.app"
+          app="$RUNNER_TEMP/out/Release-iphoneos/InputLine.app"
           test -d "$app"
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
           cp -R "$app" "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/Couchlink-iOS.ipa" Payload)
-          ls -l Couchlink-iOS.ipa
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/InputLine-iOS.ipa" Payload)
+          ls -l InputLine-iOS.ipa
       - name: Upload .ipa
         uses: actions/upload-artifact@v4
         with:
-          name: Couchlink-iOS.ipa
-          path: Couchlink-iOS.ipa
+          name: InputLine-iOS.ipa
+          path: InputLine-iOS.ipa
           if-no-files-found: error
 
   usbip-end-to-end:
@@ -232,7 +234,7 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install --quiet pyusb
       - name: Build
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCOUCHLINK_BUILD_TESTS=OFF
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DINPUTLINE_BUILD_TESTS=OFF
           cmake --build build -j
       - name: Build SDL (with libusb HIDAPI) and the probe
         run: |
@@ -247,10 +249,10 @@ jobs:
             "$RUNNER_TEMP/sdl/lib/libSDL3.a" -lm -lpthread -ldl -o "$RUNNER_TEMP/sdl_probe"
       - name: Pair, stream and attach
         run: |
-          sudo ./build/host/couchlink-host --verbose --config "$RUNNER_TEMP/host.conf" --pin 424242 pair > "$RUNNER_TEMP/host.log" 2>&1 &
+          sudo ./build/host/inputline-host --verbose --config "$RUNNER_TEMP/host.conf" --pin 424242 pair > "$RUNNER_TEMP/host.log" 2>&1 &
           sleep 1
-          ./build/host/couchlink-sim --state "$RUNNER_TEMP/sim.pairing" --pin 424242 pair
-          ./build/host/couchlink-sim --state "$RUNNER_TEMP/sim.pairing" run 120 > "$RUNNER_TEMP/sim.log" 2>&1 &
+          ./build/host/inputline-sim --state "$RUNNER_TEMP/sim.pairing" --pin 424242 pair
+          ./build/host/inputline-sim --state "$RUNNER_TEMP/sim.pairing" run 120 > "$RUNNER_TEMP/sim.log" 2>&1 &
           sleep 3
       - name: Check at the USB level (libusb)
         run: sudo "$RUNNER_TEMP/venv/bin/python" tests/integration/check_usb.py
@@ -275,8 +277,8 @@ jobs:
       - name: Logs
         if: always()
         run: |
-          echo "--- couchlink-host"; cat "$RUNNER_TEMP/host.log" || true
-          echo "--- couchlink-sim"; cat "$RUNNER_TEMP/sim.log" || true
+          echo "--- inputline-host"; cat "$RUNNER_TEMP/host.log" || true
+          echo "--- inputline-sim"; cat "$RUNNER_TEMP/sim.log" || true
           echo "--- usbip port"; sudo usbip port || true
           echo "--- dmesg"; sudo dmesg | grep -iE "usb|hid|vhci" | tail -n 40 || true
           echo "--- usb interfaces"; for d in /sys/bus/usb/devices/*-*:*; do echo "$d: $(cat $d/modalias 2>/dev/null)"; done || true

@@ -1,11 +1,11 @@
-#include "couchlink/crypto.h"
+#include "inputline/crypto.h"
 
-#include "couchlink/sha256.h"
+#include "inputline/sha256.h"
 
 #include <algorithm>
 #include <cstring>
 
-namespace couchlink::crypto {
+namespace inputline::crypto {
 
   namespace {
 
@@ -456,4 +456,4 @@ namespace couchlink::crypto {
     return true;
   }
 
-}  // namespace couchlink::crypto
+}  // namespace inputline::crypto

@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-namespace couchlink {
+namespace inputline {
 
   struct AttachOptions {
     bool enabled = true;
@@ -34,4 +34,4 @@ namespace couchlink {
   /** Run a program with arguments (no shell) and return its exit code, or -1 if it could not start. */
   int run_process(const std::vector<std::string> &argv);
 
-}  // namespace couchlink
+}  // namespace inputline

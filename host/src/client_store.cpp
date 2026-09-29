@@ -14,7 +14,7 @@
   #include <sys/stat.h>
 #endif
 
-namespace couchlink {
+namespace inputline {
 
   namespace {
     std::string sanitize_name(const std::string &name) {
@@ -29,13 +29,11 @@ namespace couchlink {
   ClientStore::ClientStore(std::string path):
       path_(std::move(path)) {}
 
+#ifndef _WIN32
   namespace {
+    /** $XDG_CONFIG_HOME/<name, lowercased>, or ~/.config/<name, lowercased>. */
     std::filesystem::path config_dir(const char *name) {
       namespace fs = std::filesystem;
-#ifdef _WIN32
-      const char *base = std::getenv("APPDATA");
-      return fs::path(base ? base : ".") / name;
-#else
       const char *xdg = std::getenv("XDG_CONFIG_HOME");
       const char *home = std::getenv("HOME");
       std::string lower(name);
@@ -43,25 +41,17 @@ namespace couchlink {
         return static_cast<char>(std::tolower(c));
       });
       return xdg && *xdg ? fs::path(xdg) / lower : fs::path(home ? home : ".") / ".config" / lower;
-#endif
     }
   }  // namespace
+#endif
 
   std::string ClientStore::default_path() {
 #ifdef _WIN32
     // Shared by the service and an administrator terminal; see desktop::prepare_data_dirs().
     const char *base = std::getenv("ProgramData");
-    return (std::filesystem::path(base && *base ? base : "C:\\ProgramData") / "Couchlink" / "pairing" / "couchlink-host.conf").string();
+    return (std::filesystem::path(base && *base ? base : "C:\\ProgramData") / "InputLine" / "pairing" / "inputline-host.conf").string();
 #else
-    return (config_dir("Couchlink") / "couchlink-host.conf").string();
-#endif
-  }
-
-  std::string ClientStore::legacy_path() {
-#ifdef _WIN32
-    return (config_dir("Couchlink") / "couchlink-host.conf").string();
-#else
-    return {};
+    return (config_dir("InputLine") / "inputline-host.conf").string();
 #endif
   }
 
@@ -132,7 +122,7 @@ namespace couchlink {
 #ifndef _WIN32
       ::chmod(temp.c_str(), S_IRUSR | S_IWUSR);
 #endif
-      file << "# Couchlink host: paired clients. Contains secret keys - do not share.\n";
+      file << "# InputLine host: paired clients. Contains secret keys - do not share.\n";
       for (const auto &client : clients_) {
         char id[9];
         std::snprintf(id, sizeof(id), "%08x", client.client_id);
@@ -187,4 +177,4 @@ namespace couchlink {
     return clients_;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

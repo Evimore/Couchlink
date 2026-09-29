@@ -7,7 +7,7 @@
 #include <sstream>
 #include <string>
 
-namespace couchlink::log {
+namespace inputline::log {
 
   enum class Level {
     kDebug = 0,
@@ -52,4 +52,4 @@ namespace couchlink::log {
     emit(Level::kError, args...);
   }
 
-}  // namespace couchlink::log
+}  // namespace inputline::log

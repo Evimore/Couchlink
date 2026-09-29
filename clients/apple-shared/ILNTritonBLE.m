@@ -1,12 +1,12 @@
 //
-//  CLKTritonBLE.m
-//  Couchlink
+//  ILNTritonBLE.m
+//  InputLine
 //
 //  GATT layout and pairing behaviour follow SDL's src/hidapi/ios/hid.m
 //  (Copyright Valve Corporation, zlib license).
 //
 
-#import "CLKTritonBLE.h"
+#import "ILNTritonBLE.h"
 
 #import <CoreBluetooth/CoreBluetooth.h>
 
@@ -25,13 +25,13 @@ static const NSTimeInterval kNotifyRetryInterval = 1.0;
 // controller switched on mid-stream is picked up.
 static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
-#pragma mark - CLKTritonDevice
+#pragma mark - ILNTritonDevice
 
-@interface CLKTritonDevice () <CBPeripheralDelegate>
+@interface ILNTritonDevice () <CBPeripheralDelegate>
 
 @property (nonatomic, strong) CBPeripheral *peripheral;
 @property (nonatomic, strong) dispatch_queue_t queue;
-@property (nonatomic, weak) id<CLKTritonBLEDelegate> delegate;
+@property (nonatomic, weak) id<ILNTritonBLEDelegate> delegate;
 @property (nonatomic, strong, nullable) CBCharacteristic *inputCharacteristic;
 @property (nonatomic, strong, nullable) CBCharacteristic *reportCharacteristic;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, CBCharacteristic *> *outputCharacteristics;
@@ -43,9 +43,9 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 @end
 
-@implementation CLKTritonDevice
+@implementation ILNTritonDevice
 
-- (instancetype)initWithPeripheral:(CBPeripheral *)peripheral queue:(dispatch_queue_t)queue delegate:(id<CLKTritonBLEDelegate>)delegate
+- (instancetype)initWithPeripheral:(CBPeripheral *)peripheral queue:(dispatch_queue_t)queue delegate:(id<ILNTritonBLEDelegate>)delegate
 {
     if ((self = [super init])) {
         _peripheral = peripheral;
@@ -161,9 +161,9 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
     [self cancelNotifyRetry];
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
     dispatch_source_set_timer(timer, DISPATCH_TIME_NOW, (uint64_t)(kNotifyRetryInterval * NSEC_PER_SEC), NSEC_PER_SEC / 10);
-    __weak CLKTritonDevice *weakSelf = self;
+    __weak ILNTritonDevice *weakSelf = self;
     dispatch_source_set_event_handler(timer, ^{
-        CLKTritonDevice *strongSelf = weakSelf;
+        ILNTritonDevice *strongSelf = weakSelf;
         if (strongSelf == nil || strongSelf.ready || strongSelf.inputCharacteristic == nil) {
             [strongSelf cancelNotifyRetry];
             return;
@@ -276,14 +276,14 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 @end
 
-#pragma mark - CLKTritonBLE
+#pragma mark - ILNTritonBLE
 
-@interface CLKTritonBLE () <CBCentralManagerDelegate>
+@interface ILNTritonBLE () <CBCentralManagerDelegate>
 
-@property (nonatomic, weak) id<CLKTritonBLEDelegate> delegate;
+@property (nonatomic, weak) id<ILNTritonBLEDelegate> delegate;
 @property (nonatomic, strong) dispatch_queue_t queue;
 @property (nonatomic, strong, nullable) CBCentralManager *central;
-@property (nonatomic, strong) NSMutableDictionary<NSUUID *, CLKTritonDevice *> *devices;
+@property (nonatomic, strong) NSMutableDictionary<NSUUID *, ILNTritonDevice *> *devices;
 @property (nonatomic, assign) BOOL running;
 @property (nonatomic, assign) NSUInteger scanGeneration;
 @property (nonatomic, strong, nullable) dispatch_source_t pollTimer;
@@ -291,21 +291,21 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 @end
 
-@implementation CLKTritonBLE
+@implementation ILNTritonBLE
 
-- (instancetype)initWithDelegate:(id<CLKTritonBLEDelegate>)delegate
+- (instancetype)initWithDelegate:(id<ILNTritonBLEDelegate>)delegate
 {
     return [self initWithDelegate:delegate restoreIdentifier:nil];
 }
 
-- (instancetype)initWithDelegate:(id<CLKTritonBLEDelegate>)delegate restoreIdentifier:(NSString *)restoreIdentifier
+- (instancetype)initWithDelegate:(id<ILNTritonBLEDelegate>)delegate restoreIdentifier:(NSString *)restoreIdentifier
 {
     if ((self = [super init])) {
         _restoreIdentifier = [restoreIdentifier copy];
         _delegate = delegate;
         // Reports must be drained promptly or iOS may quietly stop delivering
         // them, so use a dedicated high-priority serial queue.
-        _queue = dispatch_queue_create("com.evimore.couchlink.ble", DISPATCH_QUEUE_SERIAL);
+        _queue = dispatch_queue_create("com.evimore.inputline.ble", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
         _devices = [NSMutableDictionary dictionary];
     }
@@ -338,7 +338,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
         self.running = NO;
         [self stopPolling];
         [self.central stopScan];
-        for (CLKTritonDevice *device in self.devices.allValues) {
+        for (ILNTritonDevice *device in self.devices.allValues) {
             [self.central cancelPeripheralConnection:device.peripheral];
             [device didDisconnect];
         }
@@ -353,12 +353,12 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
     });
 }
 
-- (NSArray<CLKTritonDevice *> *)readyDevices
+- (NSArray<ILNTritonDevice *> *)readyDevices
 {
-    __block NSArray<CLKTritonDevice *> *result = nil;
+    __block NSArray<ILNTritonDevice *> *result = nil;
     dispatch_sync(self.queue, ^{
         NSMutableArray *ready = [NSMutableArray array];
-        for (CLKTritonDevice *device in self.devices.allValues) {
+        for (ILNTritonDevice *device in self.devices.allValues) {
             if (device.ready) {
                 [ready addObject:device];
             }
@@ -396,9 +396,9 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
     dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
     const uint64_t interval = (uint64_t)(kKnownControllerPollInterval * NSEC_PER_SEC);
     dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)interval), interval, NSEC_PER_SEC / 4);
-    __weak CLKTritonBLE *weakSelf = self;
+    __weak ILNTritonBLE *weakSelf = self;
     dispatch_source_set_event_handler(timer, ^{
-        CLKTritonBLE *strongSelf = weakSelf;
+        ILNTritonBLE *strongSelf = weakSelf;
         if (strongSelf.running && strongSelf.central.state == CBManagerStatePoweredOn) {
             [strongSelf connectKnownControllers];
         }
@@ -440,7 +440,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
     if (self.devices[peripheral.identifier] != nil) {
         return;
     }
-    CLKTritonDevice *device = [[CLKTritonDevice alloc] initWithPeripheral:peripheral queue:self.queue delegate:self.delegate];
+    ILNTritonDevice *device = [[ILNTritonDevice alloc] initWithPeripheral:peripheral queue:self.queue delegate:self.delegate];
     self.devices[peripheral.identifier] = device;
     [self.central connectPeripheral:peripheral options:nil];
 }
@@ -455,7 +455,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
         if (![peripheral.name hasPrefix:@"Steam"] || self.devices[peripheral.identifier] != nil) {
             continue;
         }
-        CLKTritonDevice *device = [[CLKTritonDevice alloc] initWithPeripheral:peripheral queue:self.queue delegate:self.delegate];
+        ILNTritonDevice *device = [[ILNTritonDevice alloc] initWithPeripheral:peripheral queue:self.queue delegate:self.delegate];
         self.devices[peripheral.identifier] = device;
         if (peripheral.state == CBPeripheralStateConnected) {
             [device didConnect];
@@ -475,7 +475,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
     } else {
         [self stopPolling];
         if (central.state == CBManagerStateUnauthorized && self.running) {
-            id<CLKTritonBLEDelegate> delegate = self.delegate;
+            id<ILNTritonBLEDelegate> delegate = self.delegate;
             if ([delegate respondsToSelector:@selector(tritonBluetoothUnauthorized)]) {
                 [delegate tritonBluetoothUnauthorized];
             }
@@ -503,7 +503,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error
 {
-    CLKTritonDevice *device = self.devices[peripheral.identifier];
+    ILNTritonDevice *device = self.devices[peripheral.identifier];
     device.lastDisconnectError = error;
     [device didDisconnect];
     if (self.running && device != nil) {

@@ -9,9 +9,9 @@
  */
 #pragma once
 
-#include "couchlink/feature_responder.h"
-#include "couchlink/link_protocol.h"
-#include "couchlink/report_converter.h"
+#include "inputline/feature_responder.h"
+#include "inputline/link_protocol.h"
+#include "inputline/report_converter.h"
 #include "usbip_server.h"
 
 #include <bitset>
@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-namespace couchlink {
+namespace inputline {
 
   class SteamControllerDevice: public usbip::UsbDevice {
   public:
@@ -89,4 +89,4 @@ namespace couchlink {
     OutputCallback output_;
   };
 
-}  // namespace couchlink
+}  // namespace inputline

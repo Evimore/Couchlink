@@ -1,4 +1,4 @@
-// couchlink-host: receives Steam Controller reports from Couchlink clients and
+// inputline-host: receives Steam Controller reports from InputLine clients and
 // presents them to Steam as a real wired Steam Controller.
 
 #include "client_store.h"
@@ -8,9 +8,9 @@
 #include "link_server.h"
 #include "log.h"
 #include "net.h"
-#include "couchlink/feature_responder.h"
-#include "couchlink/link_client.h"
-#include "couchlink/test_pattern.h"
+#include "inputline/feature_responder.h"
+#include "inputline/link_client.h"
+#include "inputline/test_pattern.h"
 #include "usbip_server.h"
 
 #include <algorithm>
@@ -30,11 +30,11 @@
 #include <thread>
 #include <vector>
 
-#ifndef COUCHLINK_VERSION
-  #define COUCHLINK_VERSION "dev"
+#ifndef INPUTLINE_VERSION
+  #define INPUTLINE_VERSION "dev"
 #endif
 
-using namespace couchlink;
+using namespace inputline;
 
 namespace {
 
@@ -66,15 +66,15 @@ namespace {
 
   void print_usage() {
     std::printf(
-      "Couchlink host " COUCHLINK_VERSION "\n"
+      "InputLine host " INPUTLINE_VERSION "\n"
       "\n"
-      "Usage: couchlink-host [options] [command]\n"
+      "Usage: inputline-host [options] [command]\n"
       "\n"
       "Commands:\n"
       "  run              Serve paired clients (default). An unpaired iPad / iPhone\n"
       "                   can ask to pair: a code pops up on this PC's screen.\n"
       "  pair             Like run, and show a pairing code right away.\n"
-      "  service          How Windows starts the Couchlink service the installer\n"
+      "  service          How Windows starts the InputLine service the installer\n"
       "                   sets up. Extra options go in %s\\options.txt.\n"
       "  install          (Without the installer; as administrator) Start at every\n"
       "                   logon in the background, and allow the link through the\n"
@@ -94,7 +94,7 @@ namespace {
       "  --config PATH    Paired-clients file (default: %s)\n"
       "  --name NAME      Name shown to clients (default: computer name)\n"
       "  --pin CODE       With 'pair': use this code instead of a random one\n"
-      "  --no-remote-pairing  Only pair through 'couchlink-host pair'\n"
+      "  --no-remote-pairing  Only pair through 'inputline-host pair'\n"
       "  --no-discovery   Don't announce this PC on the local network\n"
       "  --log PATH       Write the log to a file\n"
       "  --stats          Log report timing every 10 s (rate, gaps)\n"
@@ -137,7 +137,7 @@ namespace {
         print_usage();
         std::exit(0);
       } else if (arg == "--version") {
-        std::printf("%s\n", COUCHLINK_VERSION);
+        std::printf("%s\n", INPUTLINE_VERSION);
         std::exit(0);
       } else if (arg == "--port") {
         if (!value(v) || !parse_port(v, args.port)) {
@@ -234,26 +234,13 @@ namespace {
   }
 
   bool parse_tokens(const std::vector<std::string> &tokens, Arguments &args) {
-    std::vector<std::string> storage {"couchlink-host"};
+    std::vector<std::string> storage {"inputline-host"};
     storage.insert(storage.end(), tokens.begin(), tokens.end());
     std::vector<char *> argv;
     for (auto &token : storage) {
       argv.push_back(token.data());
     }
     return parse_arguments(static_cast<int>(argv.size()), argv.data(), args, true);
-  }
-
-  /** Pairings used to live in %APPDATA%; bring them along once. */
-  void migrate_legacy_pairings(const std::string &path) {
-    const std::string legacy = ClientStore::legacy_path();
-    std::error_code error;
-    if (legacy.empty() || std::filesystem::exists(path, error) || !std::filesystem::exists(legacy, error)) {
-      return;
-    }
-    std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
-    if (std::filesystem::copy_file(legacy, path, error)) {
-      log::info("moved paired devices from ", legacy, " to ", path);
-    }
   }
 
   std::string computer_name() {
@@ -280,7 +267,7 @@ namespace {
   void show_code(const std::string &client_name, const std::string &code) {
     std::printf(
       "\n  Pairing code for %s:  %.3s %s\n"
-      "  Type it into Couchlink on your iPad or iPhone (it works for 2 minutes).\n\n",
+      "  Type it into InputLine on your iPad or iPhone (it works for 2 minutes).\n\n",
       client_name.c_str(), code.c_str(), code.size() > 3 ? code.c_str() + 3 : ""
     );
     std::fflush(stdout);
@@ -343,7 +330,7 @@ namespace {
       return 1;
     }
     if (clients.empty()) {
-      std::printf("No paired clients. Run 'couchlink-host pair' to add one.\n");
+      std::printf("No paired clients. Run 'inputline-host pair' to add one.\n");
       return 0;
     }
     for (const auto &client : clients) {
@@ -354,7 +341,7 @@ namespace {
 
   int forget_client(ClientStore &store, const Arguments &args) {
     if (args.positional.empty()) {
-      std::fprintf(stderr, "usage: couchlink-host forget <id>\n");
+      std::fprintf(stderr, "usage: inputline-host forget <id>\n");
       return 2;
     }
     const auto id = static_cast<std::uint32_t>(std::strtoul(args.positional[0].c_str(), nullptr, 16));
@@ -418,9 +405,6 @@ namespace {
 
     desktop::prepare_data_dirs();
     const std::string config = args.config.empty() ? ClientStore::default_path() : args.config;
-    if (args.config.empty()) {
-      migrate_legacy_pairings(config);
-    }
     ClientStore store(config);
     store.load();
 
@@ -441,7 +425,7 @@ namespace {
 
     usbip::Server usbip_server;
     bool usbip_started = usbip_server.start("127.0.0.1", args.usbip_port);
-    // The demo can run next to the Couchlink service: take the next free port.
+    // The demo can run next to the InputLine service: take the next free port.
     for (int offset = 1; !usbip_started && args.command == "demo" && offset <= 4; ++offset) {
       usbip_started = usbip_server.start("127.0.0.1", static_cast<std::uint16_t>(args.usbip_port + offset));
     }
@@ -467,18 +451,18 @@ namespace {
     options.bind_address = args.bind;
     options.port = args.port;
     options.host_name = args.name.empty() ? computer_name() : args.name;
-  options.software_version = COUCHLINK_VERSION;
+  options.software_version = INPUTLINE_VERSION;
     options.remote_pairing = args.remote_pairing;
     options.show_code = show_code;
     options.stats_interval = std::chrono::seconds(args.stats_seconds);
     auto server = std::make_unique<LinkServer>(options, store, backend);
     if (!server->start()) {
       if (desktop::service_installed() && args.command != "service") {
-        log::error("the Couchlink service already runs in the background: there is nothing to start. "
-                   "To run it in this window instead, first stop the service (Stop-Service Couchlink).");
+        log::error("the InputLine service already runs in the background: there is nothing to start. "
+                   "To run it in this window instead, first stop the service (Stop-Service InputLine).");
       } else {
-        log::error("is couchlink-host already running (for example installed with 'couchlink-host install')? "
-                   "Then there is nothing to start: pair by tapping Connect in Couchlink.");
+        log::error("is inputline-host already running (for example installed with 'inputline-host install')? "
+                   "Then there is nothing to start: pair by tapping Connect in InputLine.");
       }
       return 1;
     }
@@ -489,14 +473,14 @@ namespace {
         if (outcome.success) {
           std::printf("Paired with '%s'. It will connect automatically from now on.\n", outcome.client_name.c_str());
         } else {
-          std::printf("Pairing did not complete. Run 'couchlink-host pair' to try again.\n");
+          std::printf("Pairing did not complete. Run 'inputline-host pair' to try again.\n");
         }
         std::fflush(stdout);
       });
-      std::printf("Open Couchlink on your iPad or iPhone, enter this PC's address and tap Connect.\n");
+      std::printf("Open InputLine on your iPad or iPhone, enter this PC's address and tap Connect.\n");
       show_code("your iPad or iPhone", code);
     } else if (store.list().empty()) {
-      log::info("no paired devices yet: tap Connect in Couchlink on your iPad or iPhone, and a pairing code will pop up here");
+      log::info("no paired devices yet: tap Connect in InputLine on your iPad or iPhone, and a pairing code will pop up here");
     }
 
     discovery::Advertiser advertiser;
@@ -533,7 +517,7 @@ int main(int argc, char **argv) {
       std::fprintf(stderr, "ignoring options.txt: it has an invalid option\n");
     }
     if (args.log_file.empty() && !dir.empty()) {
-      args.log_file = dir + "\\couchlink-host.log";
+      args.log_file = dir + "\\inputline-host.log";
     }
   }
 
@@ -545,7 +529,7 @@ int main(int argc, char **argv) {
     desktop::hide_console();
   }
   if (service) {
-    log::info("Couchlink ", COUCHLINK_VERSION, " starting as a Windows service");
+    log::info("InputLine ", INPUTLINE_VERSION, " starting as a Windows service");
     args.command = "service";
     return desktop::run_service([&args] { return run_command(args); }, [] { g_quit = true; });
   }

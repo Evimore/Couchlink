@@ -12,7 +12,7 @@
 extern char **environ;
 #endif
 
-namespace couchlink {
+namespace inputline {
 
   std::string default_usbip_executable() {
 #ifdef _WIN32
@@ -162,4 +162,4 @@ namespace couchlink {
   }
 #endif
 
-}  // namespace couchlink
+}  // namespace inputline

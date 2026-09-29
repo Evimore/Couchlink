@@ -13,7 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace couchlink::crypto {
+namespace inputline::crypto {
 
   using Key32 = std::array<std::uint8_t, 32>;
   using Nonce12 = std::array<std::uint8_t, 12>;
@@ -50,4 +50,4 @@ namespace couchlink::crypto {
     const std::uint8_t *ciphertext, std::uint8_t *plaintext, std::size_t length, const Tag16 &tag
   );
 
-}  // namespace couchlink::crypto
+}  // namespace inputline::crypto

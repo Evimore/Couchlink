@@ -1,9 +1,9 @@
-#include "couchlink/sha256.h"
+#include "inputline/sha256.h"
 
 #include <algorithm>
 #include <cstring>
 
-namespace couchlink {
+namespace inputline {
 
   namespace {
     constexpr std::array<std::uint32_t, 64> kRound = {
@@ -154,4 +154,4 @@ namespace couchlink {
     return difference == 0;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

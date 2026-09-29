@@ -1,15 +1,15 @@
 #include "link_server.h"
 
 #include "log.h"
-#include "couchlink/link_client.h"
-#include "couchlink/sha256.h"
+#include "inputline/link_client.h"
+#include "inputline/sha256.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <random>
 #include <set>
 
-namespace couchlink {
+namespace inputline {
 
   using namespace link;
 
@@ -126,9 +126,9 @@ namespace couchlink {
     }
     last = now;
     if (version < kMinVersion) {
-      log::warn("link: an older Couchlink app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update the app");
+      log::warn("link: an older InputLine app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update the app");
     } else {
-      log::warn("link: a newer Couchlink app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update Couchlink on this PC");
+      log::warn("link: a newer InputLine app (protocol ", int(version), ") at ", from.to_string(), " tried to connect: update InputLine on this PC");
     }
   }
 
@@ -362,7 +362,7 @@ namespace couchlink {
     reply.counter = datagram->header.counter;
     send_raw(seal(reply, encode(ack), &client->key), from);
     log::info("link: '", client->name, "' connected from ", from.to_string(),
-              hello->software_version.empty() ? std::string() : " (Couchlink " + hello->software_version + ")");
+              hello->software_version.empty() ? std::string() : " (InputLine " + hello->software_version + ")");
   }
 
   void LinkServer::handle_session(const std::uint8_t *data, std::size_t length, const net::Endpoint &from) {
@@ -694,4 +694,4 @@ namespace couchlink {
     ++counters_.outputs_sent;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

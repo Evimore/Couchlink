@@ -11,7 +11,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace couchlink {
+namespace inputline {
 
   using Sha256Digest = std::array<std::uint8_t, 32>;
 
@@ -48,4 +48,4 @@ namespace couchlink {
   /** Constant-time comparison of two equal-length buffers. */
   bool constant_time_equal(const std::uint8_t *a, const std::uint8_t *b, std::size_t length);
 
-}  // namespace couchlink
+}  // namespace inputline

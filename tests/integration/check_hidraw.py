@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the virtual Steam Controller through the Linux HID stack.
 
-Run as root after couchlink-host attached a controller through vhci-hcd. Finds
+Run as root after inputline-host attached a controller through vhci-hcd. Finds
 the hidraw node for 28DE:1302, reads state reports, and performs the same
 feature-report handshake Steam uses to identify the controller.
 """

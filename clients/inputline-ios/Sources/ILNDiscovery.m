@@ -1,25 +1,25 @@
 //
-//  CLKDiscovery.m
-//  Couchlink
+//  ILNDiscovery.m
+//  InputLine
 //
 
-#import "CLKDiscovery.h"
+#import "ILNDiscovery.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
-static NSString *const kServiceType = @"_couchlink._udp.";
+static NSString *const kServiceType = @"_inputline._udp.";
 static const uint16_t kDefaultPort = 48150;
 static const NSTimeInterval kResolveTimeout = 5.0;
 
-@interface CLKDiscoveredPC ()
+@interface ILNDiscoveredPC ()
 @property (nonatomic, copy, readwrite) NSString *name;
 @property (nonatomic, copy, readwrite) NSString *address;
 @end
 
-@implementation CLKDiscoveredPC
+@implementation ILNDiscoveredPC
 @end
 
 /// The address to connect to, from a resolved service's socket addresses. Prefers IPv4.
@@ -58,17 +58,17 @@ static NSString *_Nullable AddressFromSockaddrs(NSArray<NSData *> *addresses)
     return ipv6 ? [NSString stringWithFormat:@"[%@]:%u", text, port] : [NSString stringWithFormat:@"%@:%u", text, port];
 }
 
-@interface CLKDiscovery () <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
+@interface ILNDiscovery () <NSNetServiceBrowserDelegate, NSNetServiceDelegate>
 @end
 
-@implementation CLKDiscovery {
-    __weak id<CLKDiscoveryDelegate> _delegate;
+@implementation ILNDiscovery {
+    __weak id<ILNDiscoveryDelegate> _delegate;
     NSNetServiceBrowser *_browser;
     NSMutableArray<NSNetService *> *_services;
-    NSMutableDictionary<NSString *, CLKDiscoveredPC *> *_resolved;  // by service name
+    NSMutableDictionary<NSString *, ILNDiscoveredPC *> *_resolved;  // by service name
 }
 
-- (instancetype)initWithDelegate:(id<CLKDiscoveryDelegate>)delegate
+- (instancetype)initWithDelegate:(id<ILNDiscoveryDelegate>)delegate
 {
     if ((self = [super init])) {
         _delegate = delegate;
@@ -104,9 +104,9 @@ static NSString *_Nullable AddressFromSockaddrs(NSArray<NSData *> *addresses)
     }
 }
 
-- (NSArray<CLKDiscoveredPC *> *)pcs
+- (NSArray<ILNDiscoveredPC *> *)pcs
 {
-    return [_resolved.allValues sortedArrayUsingComparator:^NSComparisonResult(CLKDiscoveredPC *a, CLKDiscoveredPC *b) {
+    return [_resolved.allValues sortedArrayUsingComparator:^NSComparisonResult(ILNDiscoveredPC *a, ILNDiscoveredPC *b) {
         return [a.name localizedCaseInsensitiveCompare:b.name];
     }];
 }
@@ -151,10 +151,10 @@ static NSString *_Nullable AddressFromSockaddrs(NSArray<NSData *> *addresses)
     if (address == nil) {
         return;
     }
-    CLKDiscoveredPC *pc = [[CLKDiscoveredPC alloc] init];
+    ILNDiscoveredPC *pc = [[ILNDiscoveredPC alloc] init];
     pc.name = service.name;
     pc.address = address;
-    CLKDiscoveredPC *old = _resolved[service.name];
+    ILNDiscoveredPC *old = _resolved[service.name];
     if (old != nil && [old.address isEqualToString:address]) {
         return;
     }

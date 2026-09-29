@@ -2,13 +2,13 @@
 // vectors from an independent implementation (Python's cryptography package)
 // covering every padding case of the AEAD.
 
-#include "couchlink/crypto.h"
+#include "inputline/crypto.h"
 
 #include <cstdio>
 #include <string>
 #include <vector>
 
-using namespace couchlink::crypto;
+using namespace inputline::crypto;
 
 namespace {
 

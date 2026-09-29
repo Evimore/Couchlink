@@ -1,9 +1,9 @@
 //
-//  CLKBridge.h
-//  Couchlink
+//  ILNBridge.h
+//  InputLine
 //
 //  Reads the Steam Controller over Bluetooth and forwards its raw reports to
-//  couchlink-host on the gaming PC, which plugs in a virtual wired Steam
+//  inputline-host on the gaming PC, which plugs in a virtual wired Steam
 //  Controller. Runs in the background, next to any streaming app.
 //
 
@@ -11,20 +11,20 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class CLKDiscoveredPC;
+@class ILNDiscoveredPC;
 
-typedef NS_ENUM(NSInteger, CLKLinkState) {
-    CLKLinkStateNoPC,        // no PC address yet
-    CLKLinkStateSearching,   // probing the PC
-    CLKLinkStateNotFound,    // no answer yet; still trying
-    CLKLinkStatePairing,     // waiting for the code shown on the PC
-    CLKLinkStateConnecting,  // paired; starting a session
-    CLKLinkStateConnected,
+typedef NS_ENUM(NSInteger, ILNLinkState) {
+    ILNLinkStateNoPC,        // no PC address yet
+    ILNLinkStateSearching,   // probing the PC
+    ILNLinkStateNotFound,    // no answer yet; still trying
+    ILNLinkStatePairing,     // waiting for the code shown on the PC
+    ILNLinkStateConnecting,  // paired; starting a session
+    ILNLinkStateConnected,
 };
 
 /// A snapshot for the UI; safe to read on the main thread.
-@interface CLKStatus : NSObject
-@property (nonatomic) CLKLinkState linkState;
+@interface ILNStatus : NSObject
+@property (nonatomic) ILNLinkState linkState;
 @property (nonatomic, copy) NSString *pcAddress;
 @property (nonatomic, copy) NSString *pcName;
 @property (nonatomic, copy) NSString *linkText;
@@ -36,26 +36,26 @@ typedef NS_ENUM(NSInteger, CLKLinkState) {
 @property (nonatomic, copy) NSString *timingForeground;
 @property (nonatomic, copy) NSString *timingBackground;
 @property (nonatomic, copy) NSString *timingSent;       // when reports leave for the PC
-/// couchlink-host PCs announcing themselves on this network (while the app is in front).
-@property (nonatomic, copy) NSArray<CLKDiscoveredPC *> *discoveredPCs;
+/// inputline-host PCs announcing themselves on this network (while the app is in front).
+@property (nonatomic, copy) NSArray<ILNDiscoveredPC *> *discoveredPCs;
 /// Recent events, oldest first ("12:03:04.123  Controller disconnected: ...").
 @property (nonatomic, copy) NSArray<NSString *> *events;
 @end
 
-@class CLKBridge;
+@class ILNBridge;
 
-@protocol CLKBridgeDelegate <NSObject>
+@protocol ILNBridgeDelegate <NSObject>
 /// The PC is showing a pairing code; ask the user for it. Main thread.
-- (void)bridge:(CLKBridge *)bridge needsPairingCodeWithMessage:(NSString *)message;
+- (void)bridge:(ILNBridge *)bridge needsPairingCodeWithMessage:(NSString *)message;
 /// Something the user should know (short). Main thread.
-- (void)bridge:(CLKBridge *)bridge showMessage:(NSString *)message;
+- (void)bridge:(ILNBridge *)bridge showMessage:(NSString *)message;
 @end
 
-@interface CLKBridge : NSObject
+@interface ILNBridge : NSObject
 
 + (instancetype)shared;
 
-@property (nonatomic, weak, nullable) id<CLKBridgeDelegate> delegate;
+@property (nonatomic, weak, nullable) id<ILNBridgeDelegate> delegate;
 
 /// Start Bluetooth, looking for PCs on the network and, if a PC was saved, the link.
 /// Call once at launch, on the main thread.
@@ -83,7 +83,7 @@ typedef NS_ENUM(NSInteger, CLKLinkState) {
 /// Everything worth sending when reporting a problem: status, timing and events.
 - (NSString *)report;
 
-- (CLKStatus *)status;
+- (ILNStatus *)status;
 
 @end
 

@@ -1,6 +1,6 @@
 # Third-party notices
 
-`host/` is licensed under the GNU General Public License v3.0 or later (see `LICENSE`); `core/`, `clients/apple-shared/` and `clients/couchlink-ios/` under the MIT licence (see `core/LICENSE`). They build on published work from the projects below.
+`host/` is licensed under the GNU General Public License v3.0 or later (see `LICENSE`); `core/`, `clients/apple-shared/` and `clients/inputline-ios/` under the MIT licence (see `core/LICENSE`). They build on published work from the projects below.
 
 ## HIDMaestro (MIT)
 
@@ -34,7 +34,7 @@ The HID report descriptor in `host/src/triton_descriptors.h` was first captured 
 
 ## Simple DirectMedia Layer (zlib)
 
-The report layouts in `core/include/couchlink/triton.h`, the Bluetooth GATT layout used by `clients/apple-shared/CLKTritonBLE.m`, and the setting and command IDs mirror SDL's Valve-authored Steam Controller code (`src/joystick/hidapi/steam/controller_structs.h`, `controller_constants.h`, `SDL_hidapi_steam_triton.c`, `src/hidapi/ios/hid.m`). No SDL source file is copied verbatim.
+The report layouts in `core/include/inputline/triton.h`, the Bluetooth GATT layout used by `clients/apple-shared/ILNTritonBLE.m`, and the setting and command IDs mirror SDL's Valve-authored Steam Controller code (`src/joystick/hidapi/steam/controller_structs.h`, `controller_constants.h`, `SDL_hidapi_steam_triton.c`, `src/hidapi/ios/hid.m`). No SDL source file is copied verbatim.
 
 ```
 Copyright (C) 2020 Valve Corporation

@@ -1,19 +1,19 @@
 //
-//  CLKViewController.m
-//  Couchlink
+//  ILNViewController.m
+//  InputLine
 //
 //  One screen: the PC, the controller, and how smoothly Bluetooth reports
 //  arrive (in the foreground and while another app is in front).
 //
 
-#import "CLKViewController.h"
-#import "CLKBridge.h"
-#import "CLKDiscovery.h"
+#import "ILNViewController.h"
+#import "ILNBridge.h"
+#import "ILNDiscovery.h"
 
-@interface CLKViewController () <CLKBridgeDelegate, UITextFieldDelegate>
+@interface ILNViewController () <ILNBridgeDelegate, UITextFieldDelegate>
 @end
 
-@implementation CLKViewController {
+@implementation ILNViewController {
     UITextField *_addressField;
     UIStackView *_discoveredStack;
     NSString *_discoveredShown;  // what _discoveredStack shows, to rebuild only on change
@@ -97,10 +97,10 @@
     ]];
 
     UILabel *title = [self labelWithStyle:UIFontTextStyleLargeTitle color:[UIColor labelColor]];
-    title.text = @"Couchlink";
+    title.text = @"InputLine";
     [stack addArrangedSubview:title];
     [stack addArrangedSubview:[self note:@"Your Steam Controller, with full Steam Input on your gaming PC, next to any streaming app. "
-                                          "Set it up here, then switch to your streaming app: Couchlink keeps working in the background.\n\nDon't swipe Couchlink away in the app switcher: iOS then disconnects the controller and doesn't restart Couchlink until you open it again."]];
+                                          "Set it up here, then switch to your streaming app: InputLine keeps working in the background.\n\nDon't swipe InputLine away in the app switcher: iOS then disconnects the controller and doesn't restart InputLine until you open it again."]];
     [stack setCustomSpacing:24 afterView:stack.arrangedSubviews.lastObject];
 
     // PC
@@ -113,7 +113,7 @@
     _addressField.autocorrectionType = UITextAutocorrectionTypeNo;
     _addressField.returnKeyType = UIReturnKeyGo;
     _addressField.delegate = self;
-    _addressField.text = [CLKBridge shared].status.pcAddress;
+    _addressField.text = [ILNBridge shared].status.pcAddress;
     [stack addArrangedSubview:_addressField];
     [stack addArrangedSubview:[self buttonWithTitle:@"Connect" action:@selector(connect)]];
     _discoveredStack = [[UIStackView alloc] init];
@@ -124,7 +124,7 @@
     [stack addArrangedSubview:_discoveredStack];
     _linkLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
     [stack addArrangedSubview:_linkLabel];
-    [stack addArrangedSubview:[self note:@"The PC needs couchlink-host running (couchlink-host install). At home, Couchlink finds it on the network by itself. Away from home, enter its address on your VPN (for example Tailscale)."]];
+    [stack addArrangedSubview:[self note:@"The PC needs inputline-host running (inputline-host install). At home, InputLine finds it on the network by itself. Away from home, enter its address on your VPN (for example Tailscale)."]];
     [stack setCustomSpacing:24 afterView:stack.arrangedSubviews.lastObject];
 
     // Controller
@@ -176,7 +176,7 @@
     [stack addArrangedSubview:buttons];
     [stack addArrangedSubview:[self note:@"When something goes wrong, tap Share report and send it along with the PC's log."]];
 
-    [CLKBridge shared].delegate = self;
+    [ILNBridge shared].delegate = self;
     [self refresh];
 }
 
@@ -195,7 +195,7 @@
 
 - (void)refresh
 {
-    CLKStatus *status = [CLKBridge shared].status;
+    ILNStatus *status = [ILNBridge shared].status;
     _linkLabel.text = status.linkText;
     [_pauseButton setTitle:status.paused ? @"Connect to the PC" : @"Disconnect from the PC" forState:UIControlStateNormal];
     [self showDiscoveredPCs:status];
@@ -208,11 +208,11 @@
     _eventsLabel.text = recent.count > 0 ? [recent componentsJoinedByString:@"\n"] : @"-";
 }
 
-- (void)showDiscoveredPCs:(CLKStatus *)status
+- (void)showDiscoveredPCs:(ILNStatus *)status
 {
-    NSMutableArray<CLKDiscoveredPC *> *others = [NSMutableArray array];
+    NSMutableArray<ILNDiscoveredPC *> *others = [NSMutableArray array];
     NSMutableString *key = [NSMutableString string];
-    for (CLKDiscoveredPC *pc in status.discoveredPCs) {
+    for (ILNDiscoveredPC *pc in status.discoveredPCs) {
         if (![pc.address isEqualToString:status.pcAddress]) {
             [others addObject:pc];
             [key appendFormat:@"%@=%@;", pc.name, pc.address];
@@ -233,7 +233,7 @@
         [_discoveredStack addArrangedSubview:[self note:@"Found on this network:"]];
     }
     NSMutableArray<NSString *> *addresses = [NSMutableArray array];
-    for (CLKDiscoveredPC *pc in others) {
+    for (ILNDiscoveredPC *pc in others) {
         UIButton *button = [self buttonWithTitle:[NSString stringWithFormat:@"Use %@ (%@)", pc.name, pc.address] action:@selector(useDiscoveredPC:)];
         button.titleLabel.numberOfLines = 0;
         button.tag = (NSInteger)addresses.count;
@@ -248,7 +248,7 @@
 
 - (void)togglePaused
 {
-    [[CLKBridge shared] setPaused:![CLKBridge shared].status.paused];
+    [[ILNBridge shared] setPaused:![ILNBridge shared].status.paused];
     [self refresh];
 }
 
@@ -264,7 +264,7 @@
 - (void)connect
 {
     [_addressField resignFirstResponder];
-    [[CLKBridge shared] connectToPC:_addressField.text ?: @""];
+    [[ILNBridge shared] connectToPC:_addressField.text ?: @""];
     [self refresh];
 }
 
@@ -276,13 +276,13 @@
 
 - (void)pairController
 {
-    [[CLKBridge shared] scanForNewControllers];
-    [self bridge:[CLKBridge shared] showMessage:@"Looking for controllers in pairing mode for 30 seconds."];
+    [[ILNBridge shared] scanForNewControllers];
+    [self bridge:[ILNBridge shared] showMessage:@"Looking for controllers in pairing mode for 30 seconds."];
 }
 
 - (void)shareReport
 {
-    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[[[CLKBridge shared] report]] applicationActivities:nil];
+    UIActivityViewController *share = [[UIActivityViewController alloc] initWithActivityItems:@[[[ILNBridge shared] report]] applicationActivities:nil];
     // On iPad the share sheet is a popover and needs an anchor; iPhone ignores it.
     share.popoverPresentationController.sourceView = _shareButton;
     share.popoverPresentationController.sourceRect = _shareButton.bounds;
@@ -291,18 +291,18 @@
 
 - (void)copyReport
 {
-    [UIPasteboard generalPasteboard].string = [[CLKBridge shared] report];
-    [self bridge:[CLKBridge shared] showMessage:@"Copied the report."];
+    [UIPasteboard generalPasteboard].string = [[ILNBridge shared] report];
+    [self bridge:[ILNBridge shared] showMessage:@"Copied the report."];
 }
 
 - (void)resetTiming
 {
-    [[CLKBridge shared] resetTiming];
+    [[ILNBridge shared] resetTiming];
 }
 
-#pragma mark - CLKBridgeDelegate
+#pragma mark - ILNBridgeDelegate
 
-- (void)bridge:(CLKBridge *)bridge needsPairingCodeWithMessage:(NSString *)message
+- (void)bridge:(ILNBridge *)bridge needsPairingCodeWithMessage:(NSString *)message
 {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Pair with your PC" message:message preferredStyle:UIAlertControllerStyleAlert];
     [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
@@ -311,10 +311,10 @@
     }];
     __weak UIAlertController *weakAlert = alert;
     [alert addAction:[UIAlertAction actionWithTitle:@"Cancel" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
-        [[CLKBridge shared] cancelPairing];
+        [[ILNBridge shared] cancelPairing];
     }]];
     [alert addAction:[UIAlertAction actionWithTitle:@"Pair" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [[CLKBridge shared] submitPairingCode:weakAlert.textFields.firstObject.text ?: @""];
+        [[ILNBridge shared] submitPairingCode:weakAlert.textFields.firstObject.text ?: @""];
     }]];
 
     void (^present)(void) = ^{
@@ -328,7 +328,7 @@
     }
 }
 
-- (void)bridge:(CLKBridge *)bridge showMessage:(NSString *)message
+- (void)bridge:(ILNBridge *)bridge showMessage:(NSString *)message
 {
     if (self.presentedViewController != nil) {
         return;  // don't cover a pairing prompt

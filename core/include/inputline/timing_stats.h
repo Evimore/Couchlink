@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <string>
 
-namespace couchlink {
+namespace inputline {
 
   class TimingStats {
   public:
@@ -56,4 +56,4 @@ namespace couchlink {
     std::array<std::uint32_t, kBuckets + 1> histogram_ {};
   };
 
-}  // namespace couchlink
+}  // namespace inputline

@@ -1,9 +1,9 @@
-#include "couchlink/feature_responder.h"
+#include "inputline/feature_responder.h"
 
 #include <algorithm>
 #include <cstring>
 
-namespace couchlink {
+namespace inputline {
 
   namespace {
     constexpr std::size_t kStringValueBytes = 19;  // after the index byte, 20 bytes total
@@ -205,4 +205,4 @@ namespace couchlink {
     return reply;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

@@ -12,7 +12,7 @@ The 2026 Steam Controller only reaches its full potential through **Steam Input*
 
 Do what Steam Link does, next to any streaming app:
 
-1. **Read** the controller on the iPad or iPhone, in the Couchlink app, with Valve's own Bluetooth protocol (the one SDL implements). Couchlink keeps running in the background while the streaming app is in front.
+1. **Read** the controller on the iPad or iPhone, in the InputLine app, with Valve's own Bluetooth protocol (the one SDL implements). InputLine keeps running in the background while the streaming app is in front.
 2. **Forward** its raw reports, unchanged, to the PC over a small authenticated UDP link.
 3. **Present** a virtual *wired* Steam Controller (`28DE:1302`) to Steam, with the exact USB identity and handshake of the real device, so Steam claims it as genuine hardware.
 4. **Return** what Steam sends to the controller (haptics, settings) to the device, which writes it to the real controller.
@@ -20,8 +20,8 @@ Do what Steam Link does, next to any streaming app:
 ```
  Steam Controller                iPad / iPhone                               Gaming PC
  ┌──────────────┐  BLE GATT   ┌─────────────────────────┐   UDP 48150   ┌────────────────────────────────────────┐
- │ state 0x45/47├────────────►│ CLKTritonBLE            │               │ couchlink-host                         │
- │              │             │   └► Couchlink link     │ Input ───────►│  LinkServer ─► SteamControllerDevice   │
+ │ state 0x45/47├────────────►│ ILNTritonBLE            │               │ inputline-host                         │
+ │              │             │   └► InputLine link     │ Input ───────►│  LinkServer ─► SteamControllerDevice   │
  │              │◄────────────┤      (ClientSession)     │◄─── HidOutput│   (auth, sessions)   ├ report 0x45/47→0x42│
  │ haptics 0x8x │  write      │                         │               │                      ├ FeatureResponder  │
  └──────────────┘             └─────────────────────────┘               │                      └ haptics out       │
@@ -74,12 +74,12 @@ The same USB/IP server also works on Linux with the in-kernel `vhci-hcd`. That's
 
 ## Threads
 
-**couchlink-host**
+**inputline-host**
 - One UDP thread runs the link server.
 - The USB/IP server has an accept thread plus one thread per attached device.
 - Input frames are queued per device (bounded; the oldest frame is dropped, since each carries full state). They complete pending interrupt-IN URBs as they arrive.
 
-**Couchlink app**
+**InputLine app**
 - CoreBluetooth runs on a dedicated high-priority serial queue, with state restoration so iOS can relaunch the app for a controller in the background.
 - The link runs on its own serial queue. Each input datagram carries the report and the one before it, with a per-controller sequence number, so the PC recovers a single lost datagram and drops anything older than what it already has.
 - The screen reads a status snapshot on the main thread and never waits on the link queue.
@@ -90,6 +90,6 @@ The same USB/IP server also works on Linux with the in-kernel `vhci-hcd`. That's
 |---|---|
 | Controller → iPad / iPhone (BLE) | 15 ms connection interval on iOS. The same hop Steam Link pays. |
 | Wi-Fi / Ethernet to the PC | ~1–3 ms on a LAN |
-| couchlink-host → virtual device → Steam | < 1 ms (loopback USB/IP) |
+| inputline-host → virtual device → Steam | < 1 ms (loopback USB/IP) |
 
 Input latency ends up close to Steam Link's. Video and audio use the streaming app's own pipeline.

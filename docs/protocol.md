@@ -4,7 +4,7 @@ UDP, default port **48150** on the PC. Implemented in `core/src/link_protocol.cp
 
 ## Discovery
 
-`couchlink-host` announces itself over DNS-SD (mDNS) as service type `_couchlink._udp` in `local.`. The instance name is the PC's name, the same `host_name` a ProbeReply carries (dots become dashes); the SRV record gives the link port. The TXT record holds `v=1` (the TXT format version). Clients browse for the service, resolve it, and then talk to the address and port as below. On Windows the announcement goes through the system's own mDNS responder (`DnsServiceRegister`, Windows 10 1809 and later).
+`inputline-host` announces itself over DNS-SD (mDNS) as service type `_inputline._udp` in `local.`. The instance name is the PC's name, the same `host_name` a ProbeReply carries (dots become dashes); the SRV record gives the link port. The TXT record holds `v=1` (the TXT format version). Clients browse for the service, resolve it, and then talk to the address and port as below. On Windows the announcement goes through the system's own mDNS responder (`DnsServiceRegister`, Windows 10 1809 and later).
 
 ## Versions
 
@@ -39,7 +39,7 @@ A datagram whose length does not match its header is dropped.
 | `PairResult` | HMAC-SHA-256 with the pairing result key (see Pairing) |
 | everything else | ChaCha20-Poly1305 (RFC 8439): the header is associated data, the payload is encrypted, the nonce is four zero bytes followed by the counter (little-endian) |
 
-**Session keys:** base = HMAC(pairing key, `"couchlink session v2"` ‖ client nonce ‖ host nonce); client→host key = HMAC(base, `"client to host"`); host→client key = HMAC(base, `"host to client"`). One key per direction, so counters never reuse a nonce.
+**Session keys:** base = HMAC(pairing key, `"inputline session v2"` ‖ client nonce ‖ host nonce); client→host key = HMAC(base, `"client to host"`); host→client key = HMAC(base, `"host to client"`). One key per direction, so counters never reuse a nonce.
 
 **Counters**
 - **Session messages:** start at 1 per session and direction, and must strictly increase. Stale or duplicate datagrams are dropped, which suits state frames.
@@ -69,8 +69,8 @@ A datagram whose length does not match its header is dropped.
 ## Pairing
 
 1. The client makes a temporary X25519 key pair and sends `PairStart` once a second until the host answers.
-2. If no pairing window is open, the host opens one: it makes its own temporary X25519 key pair, picks a random 6-digit code and shows it on the PC's screen. Its `ProbeReply` says pairing is open and carries the host's public key. `couchlink-host pair` opens a window the same way from the PC; `--no-remote-pairing` makes `PairStart` open nothing.
-3. The user types the code on the client. Both sides compute the X25519 shared secret Z and the transcript T = `"couchlink pair v2"` ‖ client ID ‖ client public key ‖ host public key ‖ nonce, then:
+2. If no pairing window is open, the host opens one: it makes its own temporary X25519 key pair, picks a random 6-digit code and shows it on the PC's screen. Its `ProbeReply` says pairing is open and carries the host's public key. `inputline-host pair` opens a window the same way from the PC; `--no-remote-pairing` makes `PairStart` open nothing.
+3. The user types the code on the client. Both sides compute the X25519 shared secret Z and the transcript T = `"inputline pair v2"` ‖ client ID ‖ client public key ‖ host public key ‖ nonce, then:
    - pairing key = HMAC(Z, T ‖ `"pairing key"` ‖ code)
    - result key = HMAC(Z, T ‖ `"pairing result"`)
    - proof = HMAC(pairing key, T ‖ `"pairing proof"`), truncated to 16 bytes

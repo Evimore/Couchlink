@@ -1,12 +1,12 @@
-// couchlink-sim: a stand-in for the Couchlink app on an iPad or iPhone.
+// inputline-sim: a stand-in for the InputLine app on an iPad or iPhone.
 //
-// Pairs with couchlink-host and streams a synthetic Steam Controller over the
+// Pairs with inputline-host and streams a synthetic Steam Controller over the
 // real link protocol, so the whole PC side can be tested without iOS.
 
 #include "log.h"
 #include "net.h"
-#include "couchlink/link_client.h"
-#include "couchlink/test_pattern.h"
+#include "inputline/link_client.h"
+#include "inputline/test_pattern.h"
 
 #include <atomic>
 #include <chrono>
@@ -21,7 +21,7 @@
 #include <thread>
 #include <vector>
 
-using namespace couchlink;
+using namespace inputline;
 using Clock = std::chrono::steady_clock;
 
 namespace {
@@ -60,7 +60,7 @@ namespace {
     std::string command = "run";
     std::string host = "127.0.0.1";
     std::uint16_t port = link::kDefaultPort;
-    std::string state = "couchlink-sim.pairing";
+    std::string state = "inputline-sim.pairing";
     std::string pin;
     int seconds = 30;
   };
@@ -129,18 +129,18 @@ namespace {
     const int received = link.receive(buffer, sizeof(buffer), 1000);
     const auto reply = received > 0 ? link::ClientSession::parse_probe_reply(buffer, static_cast<std::size_t>(received), nonce) : std::nullopt;
     if (!reply) {
-      std::printf("No couchlink-host answered at %s:%u\n", options.host.c_str(), options.port);
+      std::printf("No inputline-host answered at %s:%u\n", options.host.c_str(), options.port);
       return 1;
     }
-    std::printf("Found '%s' (Couchlink %s, protocol %d-%d)%s\n", reply->host_name.c_str(),
+    std::printf("Found '%s' (InputLine %s, protocol %d-%d)%s\n", reply->host_name.c_str(),
                 reply->software_version.empty() ? "?" : reply->software_version.c_str(), reply->min_version, reply->max_version,
                 reply->pairing_open ? ", pairing open" : "");
     switch (link::check_compatibility(*reply)) {
       case link::Compatibility::kUpdateHost:
-        std::printf("It is older than this tool: update couchlink-host.\n");
+        std::printf("It is older than this tool: update inputline-host.\n");
         return 1;
       case link::Compatibility::kUpdateClient:
-        std::printf("It is newer than this tool: update couchlink-sim.\n");
+        std::printf("It is newer than this tool: update inputline-sim.\n");
         return 1;
       case link::Compatibility::kCompatible:
         break;
@@ -159,18 +159,18 @@ namespace {
     auto pairing = link::ClientSession::begin_pairing(random_fill);
     std::optional<link::ProbeReply> opened;
     for (int attempt = 0; attempt < 5 && !g_quit && !(opened && opened->pairing_open); ++attempt) {
-      link.send(link::ClientSession::make_pair_start(pairing, "couchlink-sim"));
+      link.send(link::ClientSession::make_pair_start(pairing, "inputline-sim"));
       const int received = link.receive(buffer, sizeof(buffer), 1000);
       if (received > 0) {
         opened = link::ClientSession::parse_probe_reply(buffer, static_cast<std::size_t>(received), pairing.nonce);
       }
     }
     if (!opened) {
-      std::printf("No couchlink-host answered at %s:%u\n", options.host.c_str(), options.port);
+      std::printf("No inputline-host answered at %s:%u\n", options.host.c_str(), options.port);
       return 1;
     }
     if (!opened->pairing_open) {
-      std::printf("'%s' is not accepting new devices right now. Run 'couchlink-host pair' on it.\n", opened->host_name.c_str());
+      std::printf("'%s' is not accepting new devices right now. Run 'inputline-host pair' on it.\n", opened->host_name.c_str());
       return 1;
     }
 
@@ -184,14 +184,14 @@ namespace {
     }
 
     if (link::check_compatibility(*opened) != link::Compatibility::kCompatible) {
-      std::printf("'%s' runs an incompatible Couchlink (%s): update one of them.\n", opened->host_name.c_str(), opened->software_version.c_str());
+      std::printf("'%s' runs an incompatible InputLine (%s): update one of them.\n", opened->host_name.c_str(), opened->software_version.c_str());
       return 1;
     }
     if (!link::ClientSession::enter_pin(pairing, opened->pairing_public_key, pin)) {
       std::printf("'%s' sent an invalid pairing key.\n", opened->host_name.c_str());
       return 1;
     }
-    const auto request = link::ClientSession::make_pair_request(pairing, "couchlink-sim");
+    const auto request = link::ClientSession::make_pair_request(pairing, "inputline-sim");
     const auto deadline = Clock::now() + std::chrono::seconds(30);
     while (!g_quit && Clock::now() < deadline) {
       link.send(request);
@@ -221,14 +221,14 @@ namespace {
   int run(const Options &options) {
     link::Pairing pairing;
     if (!load_pairing(options.state, pairing)) {
-      std::fprintf(stderr, "no pairing in %s: run 'couchlink-sim pair' first\n", options.state.c_str());
+      std::fprintf(stderr, "no pairing in %s: run 'inputline-sim pair' first\n", options.state.c_str());
       return 1;
     }
     Link link;
     if (!link.open(options)) {
       return 1;
     }
-    link::ClientSession session(pairing, "couchlink-sim", random_fill);
+    link::ClientSession session(pairing, "inputline-sim", random_fill);
     std::uint8_t buffer[link::kMaxDatagram];
 
     // Hello until acknowledged.
@@ -240,7 +240,7 @@ namespace {
       }
     }
     if (!session.established()) {
-      std::printf("No answer from %s:%u (is couchlink-host running and paired with this client?)\n", options.host.c_str(), options.port);
+      std::printf("No answer from %s:%u (is inputline-host running and paired with this client?)\n", options.host.c_str(), options.port);
       return 1;
     }
     std::printf("Connected. Streaming a test pattern for %d s...\n", options.seconds);
@@ -320,9 +320,9 @@ namespace {
 
   void usage() {
     std::printf(
-      "Usage: couchlink-sim [--host H] [--port N] [--state FILE] [--pin CODE] <probe|pair|run [seconds]>\n"
-      "  probe   Check that couchlink-host is reachable\n"
-      "  pair    Pair with couchlink-host (type the code it shows, or pass --pin)\n"
+      "Usage: inputline-sim [--host H] [--port N] [--state FILE] [--pin CODE] <probe|pair|run [seconds]>\n"
+      "  probe   Check that inputline-host is reachable\n"
+      "  pair    Pair with inputline-host (type the code it shows, or pass --pin)\n"
       "  run     Stream a synthetic Steam Controller (default 30 s)\n"
     );
   }

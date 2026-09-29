@@ -1,6 +1,6 @@
 //
-//  CLKTritonBLE.h
-//  Couchlink
+//  ILNTritonBLE.h
+//  InputLine
 //
 //  Talks to the 2026 Steam Controller ("Triton") over Bluetooth LE using
 //  Valve's GATT service, the same way Steam Link and SDL do: one notifying
@@ -13,19 +13,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class CLKTritonDevice;
+@class ILNTritonDevice;
 
-@protocol CLKTritonBLEDelegate <NSObject>
+@protocol ILNTritonBLEDelegate <NSObject>
 
 /// The controller is connected and streaming input reports.
-- (void)tritonDidBecomeReady:(CLKTritonDevice *)device;
+- (void)tritonDidBecomeReady:(ILNTritonDevice *)device;
 
 /// The controller went away (switched off, out of range, or stop was called).
-- (void)tritonDidDisconnect:(CLKTritonDevice *)device;
+- (void)tritonDidDisconnect:(ILNTritonDevice *)device;
 
 /// One input report, report ID first. Called on the Bluetooth queue at up
 /// to ~250 Hz, so do as little as possible here.
-- (void)triton:(CLKTritonDevice *)device didReceiveReport:(const uint8_t *)report length:(size_t)length;
+- (void)triton:(ILNTritonDevice *)device didReceiveReport:(const uint8_t *)report length:(size_t)length;
 
 @optional
 
@@ -34,7 +34,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
-@interface CLKTritonDevice : NSObject
+@interface ILNTritonDevice : NSObject
 
 @property (nonatomic, readonly) NSUUID *identifier;
 @property (nonatomic, readonly, copy) NSString *name;
@@ -55,17 +55,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 @end
 
-@interface CLKTritonBLE : NSObject
+@interface ILNTritonBLE : NSObject
 
-- (instancetype)initWithDelegate:(id<CLKTritonBLEDelegate>)delegate;
+- (instancetype)initWithDelegate:(id<ILNTritonBLEDelegate>)delegate;
 
 /// @param restoreIdentifier For apps with the bluetooth-central background
 ///        mode: lets iOS relaunch the app and hand back its controllers if
 ///        it was terminated in the background. nil disables restoration.
-- (instancetype)initWithDelegate:(id<CLKTritonBLEDelegate>)delegate restoreIdentifier:(nullable NSString *)restoreIdentifier;
+- (instancetype)initWithDelegate:(id<ILNTritonBLEDelegate>)delegate restoreIdentifier:(nullable NSString *)restoreIdentifier;
 - (instancetype)init NS_UNAVAILABLE;
 
-/// Controllers seen before (CLKTritonDevice.identifier). Set before -start:
+/// Controllers seen before (ILNTritonDevice.identifier). Set before -start:
 /// each gets a pending connection, which iOS completes whenever the
 /// controller is switched on, waking a background app.
 @property (nonatomic, copy) NSArray<NSUUID *> *rememberedIdentifiers;
@@ -80,7 +80,7 @@ NS_ASSUME_NONNULL_BEGIN
 /// Look for controllers in pairing mode for the given number of seconds.
 - (void)scanForNewControllers:(NSTimeInterval)seconds;
 
-@property (nonatomic, readonly) NSArray<CLKTritonDevice *> *readyDevices;
+@property (nonatomic, readonly) NSArray<ILNTritonDevice *> *readyDevices;
 
 @end
 

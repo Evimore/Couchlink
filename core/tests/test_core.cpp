@@ -1,10 +1,10 @@
-// Core library tests; run with `ctest` or the couchlink_core_tests binary.
+// Core library tests; run with `ctest` or the inputline_core_tests binary.
 
-#include "couchlink/feature_responder.h"
-#include "couchlink/report_converter.h"
-#include "couchlink/link_protocol.h"
-#include "couchlink/sha256.h"
-#include "couchlink/timing_stats.h"
+#include "inputline/feature_responder.h"
+#include "inputline/report_converter.h"
+#include "inputline/link_protocol.h"
+#include "inputline/sha256.h"
+#include "inputline/timing_stats.h"
 
 #include <cmath>
 #include <cstdio>
@@ -25,7 +25,7 @@ namespace {
     }                                                                   \
   } while (0)
 
-  using namespace couchlink;
+  using namespace inputline;
 
   TritonControls sample_controls() {
     TritonControls c {};
@@ -302,7 +302,7 @@ namespace {
   }
 
   std::string hex(const std::uint8_t *data, std::size_t length) {
-    return couchlink::link::to_hex(data, length);
+    return inputline::link::to_hex(data, length);
   }
 
   void test_sha256_vectors() {
@@ -346,14 +346,14 @@ namespace {
     CHECK(!constant_time_equal(a, b, 3));
   }
 
-  couchlink::link::Key test_key(std::uint8_t fill) {
-    couchlink::link::Key key {};
+  inputline::link::Key test_key(std::uint8_t fill) {
+    inputline::link::Key key {};
     key.fill(fill);
     return key;
   }
 
   void test_link_seal_open() {
-    using namespace couchlink::link;
+    using namespace inputline::link;
     const auto key = test_key(0x11);
 
     Header header;
@@ -398,7 +398,7 @@ namespace {
   }
 
   void test_link_unauthenticated_types() {
-    using namespace couchlink::link;
+    using namespace inputline::link;
     Header header;
     header.type = Type::kProbe;
     const auto datagram = seal(header, encode(Probe {77}), nullptr);
@@ -433,7 +433,7 @@ namespace {
   }
 
   void test_link_messages_roundtrip() {
-    using namespace couchlink::link;
+    using namespace inputline::link;
 
     ProbeReply reply;
     reply.nonce = 5;
@@ -510,7 +510,7 @@ namespace {
   }
 
   void test_link_keys_and_replay() {
-    using namespace couchlink::link;
+    using namespace inputline::link;
     const auto key = test_key(0x42);
     const auto s1 = derive_session_keys(key, 1, 2);
     CHECK(s1.client_to_host == derive_session_keys(key, 1, 2).client_to_host);
@@ -523,8 +523,8 @@ namespace {
     // other's public key; the code changes the pairing key, not the result key.
     const auto client_secret = test_key(0x11);
     const auto host_secret = test_key(0x22);
-    const auto client_public = couchlink::crypto::x25519_public_key(client_secret);
-    const auto host_public = couchlink::crypto::x25519_public_key(host_secret);
+    const auto client_public = inputline::crypto::x25519_public_key(client_secret);
+    const auto host_public = inputline::crypto::x25519_public_key(host_secret);
     const auto on_client = derive_pairing_keys(client_secret, host_public, 7, client_public, host_public, 99, "123456");
     const auto on_host = derive_pairing_keys(host_secret, client_public, 7, client_public, host_public, 99, "123456");
     CHECK(on_client && on_host);

@@ -12,7 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace couchlink {
+namespace inputline {
 
   constexpr std::uint16_t kValveVendorId = 0x28DE;
   constexpr std::uint16_t kTritonUsbProductId = 0x1302;  ///< Wired controller.
@@ -160,4 +160,4 @@ namespace couchlink {
   /** Nominal interval between state reports (SDL: "about 4 ms"). */
   constexpr std::uint32_t kStateReportIntervalUs = 4032;
 
-}  // namespace couchlink
+}  // namespace inputline

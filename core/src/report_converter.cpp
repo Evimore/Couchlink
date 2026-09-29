@@ -1,8 +1,8 @@
-#include "couchlink/report_converter.h"
+#include "inputline/report_converter.h"
 
 #include <cstring>
 
-namespace couchlink {
+namespace inputline {
 
   bool StateReportConverter::to_wired(const std::uint8_t *report, std::size_t length, StateReport &out) {
     if (report == nullptr || length < 1) {
@@ -75,4 +75,4 @@ namespace couchlink {
     return timestamp_us_;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

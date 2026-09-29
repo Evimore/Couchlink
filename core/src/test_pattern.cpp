@@ -1,9 +1,9 @@
-#include "couchlink/test_pattern.h"
+#include "inputline/test_pattern.h"
 
 #include <cmath>
 #include <cstring>
 
-namespace couchlink {
+namespace inputline {
 
   std::array<std::uint8_t, kBleStateReportSize> TestPattern::frame(std::uint64_t elapsed_us) {
     constexpr double kTwoPi = 6.283185307179586;
@@ -35,4 +35,4 @@ namespace couchlink {
     return report;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

@@ -2,8 +2,8 @@
  * @file link_client.h
  * @brief Client side of the link protocol, without any I/O.
  *
- * Builds outgoing datagrams and interprets incoming ones. The Couchlink app
- * and the couchlink-sim test tool both drive this class; each owns its own
+ * Builds outgoing datagrams and interprets incoming ones. The InputLine app
+ * and the inputline-sim test tool both drive this class; each owns its own
  * socket.
  */
 #pragma once
@@ -13,7 +13,7 @@
 #include <functional>
 #include <optional>
 
-namespace couchlink::link {
+namespace inputline::link {
 
   /** Fills a buffer with cryptographically secure random bytes. */
   using RandomSource = std::function<void(std::uint8_t *out, std::size_t length)>;
@@ -131,4 +131,4 @@ namespace couchlink::link {
     ReplayGuard rx_guard_;
   };
 
-}  // namespace couchlink::link
+}  // namespace inputline::link

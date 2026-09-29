@@ -1,9 +1,9 @@
 /**
  * @file link_protocol.h
- * @brief The UDP "link" between a streaming client and couchlink-host.
+ * @brief The UDP "link" between a streaming client and inputline-host.
  *
- * The client (the Couchlink app on an iPad or iPhone) sends the controller's
- * raw HID reports straight to couchlink-host on the gaming PC, next to the
+ * The client (the InputLine app on an iPad or iPhone) sends the controller's
+ * raw HID reports straight to inputline-host on the gaming PC, next to the
  * streaming app's own stream. Keeping the controller on its own channel means the streaming host
  * (Vibepollo, Sunshine, Apollo...) needs no changes at all.
  *
@@ -31,10 +31,11 @@
 #include <string>
 #include <vector>
 
-namespace couchlink::link {
+namespace inputline::link {
 
   constexpr std::uint16_t kDefaultPort = 48150;
-  constexpr std::uint32_t kMagic = 0x314B4C43;  // "CLK1" on the wire
+  /** "CLK1" on the wire. Never changes: every version recognises every other by it. */
+  constexpr std::uint32_t kMagic = 0x314B4C43;
   /** Protocol version this build speaks. */
   constexpr std::uint8_t kVersion = 2;
   /** Oldest protocol version this build still accepts. */
@@ -176,7 +177,7 @@ namespace couchlink::link {
     // From version 2 on (a version 1 reply reads as min = max = 1):
     std::uint8_t min_version = kMinVersion;
     std::uint8_t max_version = kVersion;
-    std::string software_version;  ///< couchlink-host's own version, for messages
+    std::string software_version;  ///< inputline-host's own version, for messages
     Key pairing_public_key {};  ///< the host's temporary pairing key while pairing is open, else zero
   };
 
@@ -327,4 +328,4 @@ namespace couchlink::link {
   std::string to_hex(const std::uint8_t *data, std::size_t length);
   std::optional<Key> key_from_hex(const std::string &hex);
 
-}  // namespace couchlink::link
+}  // namespace inputline::link

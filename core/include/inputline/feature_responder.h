@@ -25,7 +25,7 @@
 #include <string>
 #include <vector>
 
-namespace couchlink {
+namespace inputline {
 
   /** Command IDs carried in byte 1 of feature report 1 (SDL controller_constants.h). */
   enum FeatureCommand : std::uint8_t {
@@ -132,4 +132,4 @@ namespace couchlink {
     std::array<std::vector<std::uint8_t>, 2> last_request_;  // per feature report 1 and 2
   };
 
-}  // namespace couchlink
+}  // namespace inputline

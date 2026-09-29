@@ -1,17 +1,17 @@
-#include "couchlink/link_protocol.h"
+#include "inputline/link_protocol.h"
 
-#include "couchlink/sha256.h"
+#include "inputline/sha256.h"
 
 #include <algorithm>
 #include <cstring>
 
-namespace couchlink::link {
+namespace inputline::link {
 
   namespace {
-    constexpr char kSessionLabel[] = "couchlink session v2";
+    constexpr char kSessionLabel[] = "inputline session v2";
     constexpr char kClientToHostLabel[] = "client to host";
     constexpr char kHostToClientLabel[] = "host to client";
-    constexpr char kPairLabel[] = "couchlink pair v2";
+    constexpr char kPairLabel[] = "inputline pair v2";
     constexpr char kPairKeyLabel[] = "pairing key";
     constexpr char kPairResultLabel[] = "pairing result";
     constexpr char kPairProofLabel[] = "pairing proof";
@@ -750,4 +750,4 @@ namespace couchlink::link {
     return key;
   }
 
-}  // namespace couchlink::link
+}  // namespace inputline::link

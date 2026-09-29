@@ -17,7 +17,7 @@
   #include <sys/socket.h>
 #endif
 
-namespace couchlink::net {
+namespace inputline::net {
 
 #ifdef _WIN32
   using Socket = SOCKET;
@@ -73,4 +73,4 @@ namespace couchlink::net {
   int udp_recv(Socket socket, void *buffer, std::size_t capacity, Endpoint &from, int timeout_ms);
   bool udp_send(Socket socket, const void *data, std::size_t length, const Endpoint &to);
 
-}  // namespace couchlink::net
+}  // namespace inputline::net

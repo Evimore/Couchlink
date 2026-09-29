@@ -1,9 +1,9 @@
 /**
  * @file discovery.h
- * @brief Announce couchlink-host on the local network, so the Couchlink app
+ * @brief Announce inputline-host on the local network, so the InputLine app
  *        can list the PC instead of asking for its address.
  *
- * The PC is registered as a DNS-SD service of type `_couchlink._udp` through
+ * The PC is registered as a DNS-SD service of type `_inputline._udp` through
  * the operating system's own mDNS responder (Windows 10 1809 and later).
  * Elsewhere, start() returns false and clients enter the address by hand.
  */
@@ -13,10 +13,10 @@
 #include <memory>
 #include <string>
 
-namespace couchlink::discovery {
+namespace inputline::discovery {
 
   /** DNS-SD service type, as the app browses for it. */
-  inline constexpr const char *kServiceType = "_couchlink._udp";
+  inline constexpr const char *kServiceType = "_inputline._udp";
 
   /**
    * The DNS-SD instance name for a PC name: one DNS label, so dots become
@@ -40,4 +40,4 @@ namespace couchlink::discovery {
     Impl *impl_ = nullptr;  // may outlive this object if Windows never confirms the deregistration
   };
 
-}  // namespace couchlink::discovery
+}  // namespace inputline::discovery

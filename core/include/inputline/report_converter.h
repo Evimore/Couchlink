@@ -15,7 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace couchlink {
+namespace inputline {
 
   using StateReport = std::array<std::uint8_t, kStateReportSize>;
 
@@ -48,4 +48,4 @@ namespace couchlink {
     std::uint32_t timestamp_us_ = 0;
   };
 
-}  // namespace couchlink
+}  // namespace inputline

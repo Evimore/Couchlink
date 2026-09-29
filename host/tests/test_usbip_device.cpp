@@ -12,7 +12,7 @@
 #include <mutex>
 #include <thread>
 
-using namespace couchlink;
+using namespace inputline;
 
 namespace {
 

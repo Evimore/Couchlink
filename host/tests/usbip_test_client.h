@@ -12,7 +12,7 @@
 #include <string>
 #include <vector>
 
-namespace couchlink::test {
+namespace inputline::test {
 
   struct RetSubmit {
     std::uint32_t seqnum = 0;
@@ -207,4 +207,4 @@ namespace couchlink::test {
     bool expect_in_data_ = true;
   };
 
-}  // namespace couchlink::test
+}  // namespace inputline::test

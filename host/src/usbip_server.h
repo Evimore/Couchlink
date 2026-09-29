@@ -25,7 +25,7 @@
 #include <thread>
 #include <vector>
 
-namespace couchlink::usbip {
+namespace inputline::usbip {
 
   constexpr std::uint16_t kDefaultPort = 3240;
 
@@ -152,4 +152,4 @@ namespace couchlink::usbip {
     constexpr std::uint32_t kSpeedFull = 2;
   }  // namespace proto
 
-}  // namespace couchlink::usbip
+}  // namespace inputline::usbip

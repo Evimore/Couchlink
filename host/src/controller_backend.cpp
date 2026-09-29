@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <thread>
 
-namespace couchlink {
+namespace inputline {
 
   namespace {
     class UsbipController: public VirtualController {
@@ -89,4 +89,4 @@ namespace couchlink {
     return std::make_unique<UsbipController>(server_, device, busid);
   }
 
-}  // namespace couchlink
+}  // namespace inputline

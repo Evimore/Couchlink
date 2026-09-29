@@ -10,7 +10,7 @@
   #include <mutex>
 #endif
 
-namespace couchlink::discovery {
+namespace inputline::discovery {
 
   std::string instance_label(const std::string &name) {
     std::string label;
@@ -24,14 +24,14 @@ namespace couchlink::discovery {
       }
       label.resize(cut);
     }
-    return label.empty() ? "couchlink-host" : label;
+    return label.empty() ? "inputline-host" : label;
   }
 
 #ifdef _WIN32
 
   namespace {
     // The DNS-SD API is in dnsapi.dll since Windows 10 1809. It is loaded at
-    // run time, so older Windows still runs couchlink-host (without discovery)
+    // run time, so older Windows still runs inputline-host (without discovery)
     // and the build does not depend on the SDK version's windns.h.
     constexpr ULONG kRequestVersion1 = 1;  // DNS_QUERY_REQUEST_VERSION1
     constexpr DWORD kRequestPending = 9506;  // DNS_REQUEST_PENDING
@@ -92,9 +92,9 @@ namespace couchlink::discovery {
         self->free_instance(instance);
       }
       if (status == ERROR_SUCCESS) {
-        log::info("discovery: Couchlink apps on this network can now find this PC");
+        log::info("discovery: InputLine apps on this network can now find this PC");
       } else {
-        log::warn("discovery: announcing this PC failed (error ", status, "); enter its address in Couchlink instead");
+        log::warn("discovery: announcing this PC failed (error ", status, "); enter its address in InputLine instead");
       }
     }
 
@@ -135,7 +135,7 @@ namespace couchlink::discovery {
       impl->deregister_service = load<Register>(impl->dnsapi, "DnsServiceDeRegister");
     }
     if (!impl->construct || !impl->free_instance || !impl->register_service || !impl->deregister_service) {
-      log::info("discovery: not available on this Windows version; enter this PC's address in Couchlink");
+      log::info("discovery: not available on this Windows version; enter this PC's address in InputLine");
       return false;
     }
 
@@ -161,7 +161,7 @@ namespace couchlink::discovery {
     impl->request.context = impl.get();
     const DWORD status = impl->register_service(&impl->request, nullptr);
     if (status != kRequestPending) {
-      log::warn("discovery: announcing this PC failed (error ", status, "); enter its address in Couchlink instead");
+      log::warn("discovery: announcing this PC failed (error ", status, "); enter its address in InputLine instead");
       return false;
     }
     log::debug("discovery: announcing '", instance_label(name), "' as ", kServiceType, " on port ", port);
@@ -197,7 +197,7 @@ namespace couchlink::discovery {
   Advertiser::~Advertiser() = default;
 
   bool Advertiser::start(const std::string &, std::uint16_t) {
-    log::debug("discovery: not built in on this platform; enter this PC's address in Couchlink");
+    log::debug("discovery: not built in on this platform; enter this PC's address in InputLine");
     return false;
   }
 
@@ -205,4 +205,4 @@ namespace couchlink::discovery {
 
 #endif
 
-}  // namespace couchlink::discovery
+}  // namespace inputline::discovery

@@ -8,7 +8,7 @@
 #include <cstring>
 #include <string>
 
-namespace couchlink {
+namespace inputline {
 
   namespace {
     // bmRequestType values
@@ -382,4 +382,4 @@ namespace couchlink {
     return true;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

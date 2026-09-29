@@ -9,15 +9,15 @@
 // 2. Version negotiation: every combination of older/newer app and PC ends in
 //    "compatible" or a clear "update the PC" / "update the app".
 
-#include "couchlink/link_client.h"
-#include "couchlink/link_protocol.h"
+#include "inputline/link_client.h"
+#include "inputline/link_protocol.h"
 
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
 
-using namespace couchlink::link;
+using namespace inputline::link;
 
 namespace {
 
@@ -120,14 +120,14 @@ namespace {
     CHECK(frozen("sealed hello", seal(hello, encode(Hello {0x3132333435363738, "iPad", "0.2.0"}), &key), "434c4b3102101300bebafecae8030000000000003837363534333231046950616405302e322e30f71f918434857f65909f2e14b49dd178"));
 
     // Key derivations.
-    CHECK(frozen("session key", bytes_of(derive_session_keys(key, 1, 2).client_to_host), "c1784906c17f54cfbf78fa9bd15f6a32fb73efc20babbc5668800b5bd07c8eec"));
-    const auto client_public = couchlink::crypto::x25519_public_key(pattern_key(0x20));
-    const auto host_public = couchlink::crypto::x25519_public_key(pattern_key(0x30));
+    CHECK(frozen("session key", bytes_of(derive_session_keys(key, 1, 2).client_to_host), "77dce3f81df8ce51c60ee8247080754969d32d3c8e0ebe2eae77e73e78e87e52"));
+    const auto client_public = inputline::crypto::x25519_public_key(pattern_key(0x20));
+    const auto host_public = inputline::crypto::x25519_public_key(pattern_key(0x30));
     const auto keys = derive_pairing_keys(pattern_key(0x20), host_public, 7, client_public, host_public, 99, "123456");
     CHECK(keys.has_value());
     if (keys) {
-      CHECK(frozen("pairing key", bytes_of(keys->pairing_key), "bcf5bb486e6e2a6d281b35495f2046289d3edb2c886dfe829867b5021780033a"));
-      CHECK(frozen("pairing proof", std::vector<std::uint8_t>(keys->proof.begin(), keys->proof.end()), "d4e177ad42cce0e174651447f990b052"));
+      CHECK(frozen("pairing key", bytes_of(keys->pairing_key), "d0899173c074de0e7a80ee7d36432d0aa5db13297dec5a122ae5116e12700549"));
+      CHECK(frozen("pairing proof", std::vector<std::uint8_t>(keys->proof.begin(), keys->proof.end()), "8add066cf23ef6123e211974db4766cd"));
     }
   }
 
@@ -165,7 +165,7 @@ namespace {
   }
 
   void test_replies_across_versions() {
-    // What a version 1 PC (Couchlink 0.1) sends: nonce, pairing open, name.
+    // What a version 1 PC (InputLine 0.1) sends: nonce, pairing open, name.
     const std::vector<std::uint8_t> v1_payload = {8, 7, 6, 5, 4, 3, 2, 1, 0, 3, 'O', 'l', 'd'};
     const auto v1 = probe_reply_datagram(1, v1_payload);
     const auto from_v1 = ClientSession::parse_probe_reply(v1.data(), v1.size(), 0x0102030405060708);

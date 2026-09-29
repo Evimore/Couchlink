@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <mutex>
 
-namespace couchlink::log {
+namespace inputline::log {
 
   namespace {
     std::atomic<int> g_level {static_cast<int>(Level::kInfo)};
@@ -64,4 +64,4 @@ namespace couchlink::log {
     std::fflush(out);
   }
 
-}  // namespace couchlink::log
+}  // namespace inputline::log

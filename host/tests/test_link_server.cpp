@@ -1,5 +1,5 @@
 // End-to-end tests of the link server over real UDP on loopback, with the
-// client side played by couchlink::link::ClientSession (the same code the iOS
+// client side played by inputline::link::ClientSession (the same code the iOS
 // client uses) and an in-memory controller backend.
 
 #include "check.h"
@@ -7,8 +7,8 @@
 #include "discovery.h"
 #include "link_server.h"
 #include "log.h"
-#include "couchlink/link_client.h"
-#include "couchlink/test_pattern.h"
+#include "inputline/link_client.h"
+#include "inputline/test_pattern.h"
 
 #include <algorithm>
 #include <atomic>
@@ -20,13 +20,13 @@
 #include <random>
 #include <thread>
 
-using namespace couchlink;
+using namespace inputline;
 using namespace std::chrono_literals;
 
 namespace {
 
-  couchlink::link::Key test_secret(std::uint8_t seed) {
-    couchlink::link::Key key {};
+  inputline::link::Key test_secret(std::uint8_t seed) {
+    inputline::link::Key key {};
     key.fill(seed);
     return key;
   }
@@ -151,7 +151,7 @@ namespace {
   }
 
   std::string temp_config() {
-    const auto path = std::filesystem::temp_directory_path() / ("couchlink-test-" + std::to_string(std::random_device {}()) + ".conf");
+    const auto path = std::filesystem::temp_directory_path() / ("inputline-test-" + std::to_string(std::random_device {}()) + ".conf");
     return path.string();
   }
 
@@ -252,7 +252,7 @@ namespace {
     // Not pairing: the reply carries no pairing key, and requests are ignored silently.
     CHECK(probe && probe->pairing_public_key == link::Key {});
     auto stranger = link::ClientSession::begin_pairing(random_fill);
-    CHECK(link::ClientSession::enter_pin(stranger, couchlink::crypto::x25519_public_key(test_secret(1)), "111111"));
+    CHECK(link::ClientSession::enter_pin(stranger, inputline::crypto::x25519_public_key(test_secret(1)), "111111"));
     client.send(link::ClientSession::make_pair_request(stranger, "x"));
     CHECK(client.receive(200).empty());
 
@@ -413,7 +413,7 @@ namespace {
     const auto pairing = f.pair(client);
 
     // An unpaired client's hello is ignored.
-    link::ClientSession outsider(link::Pairing {0x12345678, couchlink::crypto::x25519_public_key(test_secret(2))}, "outsider", random_fill);
+    link::ClientSession outsider(link::Pairing {0x12345678, inputline::crypto::x25519_public_key(test_secret(2))}, "outsider", random_fill);
     client.send(outsider.make_hello(clock_us()));
     CHECK(client.receive(200).empty());
 
@@ -677,10 +677,10 @@ namespace {
   }
 
   void test_discovery_label() {
-    using couchlink::discovery::instance_label;
+    using inputline::discovery::instance_label;
     CHECK(instance_label("GAMING-PC") == "GAMING-PC");
     CHECK(instance_label("pc.example.lan") == "pc-example-lan");
-    CHECK(instance_label("") == "couchlink-host");
+    CHECK(instance_label("") == "inputline-host");
     CHECK(instance_label(std::string(80, 'a')).size() == 63);
     // 62 ASCII bytes, then a 2-byte UTF-8 character: cut before it, not inside it.
     CHECK(instance_label(std::string(62, 'a') + "\xC3\xA9") == std::string(62, 'a'));

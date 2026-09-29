@@ -2,12 +2,12 @@
 """Check the virtual Steam Controller at the USB level through the kernel.
 
 Uses libusb (pyusb) so it works even on kernels without the usbhid driver,
-such as GitHub's Azure runners. Run as root while couchlink-host has attached
-a controller through vhci-hcd and couchlink-sim is streaming.
+such as GitHub's Azure runners. Run as root while inputline-host has attached
+a controller through vhci-hcd and inputline-sim is streaming.
 
 Checks the HID report descriptor, the feature-report handshake Steam uses,
 the stream of state reports, and that a haptic output report written to
-the device reaches the client (couchlink-sim logs it).
+the device reaches the client (inputline-sim logs it).
 """
 
 import sys
@@ -76,7 +76,7 @@ def main():
         print("FAIL: expected a steady stream of changing state reports")
         return 1
 
-    # Haptics and settings Steam would send; couchlink-sim logs what arrives.
+    # Haptics and settings Steam would send; inputline-sim logs what arrives.
     dev.write(0x01, bytes([0x81, 0x01, 0x10, 0x00, 0x10, 0x00, 0x03, 0x00]))
     feature(dev, b"\x01\x87\x03\x09\x00\x00")
     feature(dev, b"\x01\x86")  # factory reset: must never reach the client

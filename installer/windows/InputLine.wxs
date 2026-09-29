@@ -1,13 +1,13 @@
 <!--
-  Couchlink for Windows: installs couchlink-host as the "Couchlink" service.
+  InputLine for Windows: installs inputline-host as the "InputLine" service.
 
   Build (WiX Toolset v5, see .github/workflows):
-    wix build installer/windows/Couchlink.wxs -arch x64
+    wix build installer/windows/InputLine.wxs -arch x64
       -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext
       -d Version=1.2.3 -d BinDir=build/host/Release -d RootDir=.
-      -d RepoUrl=https://github.com/OWNER/REPO -o Couchlink-Setup.msi
+      -d RepoUrl=https://github.com/OWNER/REPO -o InputLine-Setup.msi
 
-  Test installs without usbip-win2 (CI): msiexec /i Couchlink-Setup.msi SKIPUSBIPCHECK=1
+  Test installs without usbip-win2 (CI): msiexec /i InputLine-Setup.msi SKIPUSBIPCHECK=1
 -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui"
@@ -15,19 +15,19 @@
      xmlns:fire="http://wixtoolset.org/schemas/v4/wxs/firewall">
 
   <!-- Never change the UpgradeCode: it is how new versions find and replace old ones. -->
-  <Package Name="Couchlink"
-           Manufacturer="Couchlink"
+  <Package Name="InputLine"
+           Manufacturer="InputLine"
            Version="$(var.Version)"
            UpgradeCode="0643F26E-8FA2-4E37-A4C5-9B8B85E44937"
            Scope="perMachine"
            Language="1033">
-    <SummaryInformation Description="Couchlink: Steam Controller with full Steam Input while streaming to iPad and iPhone" />
+    <SummaryInformation Description="InputLine: Steam Controller with full Steam Input while streaming to iPad and iPhone" />
     <MajorUpgrade AllowSameVersionUpgrades="yes"
-                  DowngradeErrorMessage="A newer version of Couchlink is already installed." />
+                  DowngradeErrorMessage="A newer version of InputLine is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Icon Id="CouchlinkIcon" SourceFile="$(var.RootDir)\installer\windows\couchlink.ico" />
-    <Property Id="ARPPRODUCTICON" Value="CouchlinkIcon" />
+    <Icon Id="InputLineIcon" SourceFile="$(var.RootDir)\installer\windows\inputline.ico" />
+    <Property Id="ARPPRODUCTICON" Value="InputLineIcon" />
     <Property Id="ARPURLINFOABOUT" Value="$(var.RepoUrl)" />
     <Property Id="ARPHELPLINK" Value="$(var.RepoUrl)/blob/main/docs/host-setup-windows.md" />
 
@@ -38,27 +38,27 @@
       </DirectorySearch>
     </Property>
     <Launch Condition="Installed OR USBIPEXE OR SKIPUSBIPCHECK"
-            Message="Couchlink needs usbip-win2, which plugs the virtual Steam Controller into Windows. Install it from https://github.com/vadimgrn/usbip-win2/releases, then run this installer again." />
+            Message="InputLine needs usbip-win2, which plugs the virtual Steam Controller into Windows. Install it from https://github.com/vadimgrn/usbip-win2/releases, then run this installer again." />
 
     <StandardDirectory Id="ProgramFiles64Folder">
-      <Directory Id="INSTALLFOLDER" Name="Couchlink">
+      <Directory Id="INSTALLFOLDER" Name="InputLine">
         <Component Id="Host">
-          <File Id="HostExe" Source="$(var.BinDir)\couchlink-host.exe" KeyPath="yes" />
+          <File Id="HostExe" Source="$(var.BinDir)\inputline-host.exe" KeyPath="yes" />
           <ServiceInstall Id="Service"
-                          Name="Couchlink"
-                          DisplayName="Couchlink"
-                          Description="Connects Steam Controllers from the Couchlink app on iPad and iPhone to Steam on this PC."
+                          Name="InputLine"
+                          DisplayName="InputLine"
+                          Description="Connects Steam Controllers from the InputLine app on iPad and iPhone to Steam on this PC."
                           Type="ownProcess"
                           Start="auto"
                           ErrorControl="normal"
                           Account="LocalSystem"
                           Arguments="service"
                           Vital="yes" />
-          <ServiceControl Id="ServiceControl" Name="Couchlink" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+          <ServiceControl Id="ServiceControl" Name="InputLine" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
           <!-- The link port, from the local network and Tailscale only. -->
           <fire:FirewallException Id="LinkPort"
-                                  Name="Couchlink (UDP 48150)"
-                                  Description="Controller input from the Couchlink app on iPad and iPhone."
+                                  Name="InputLine (UDP 48150)"
+                                  Description="Controller input from the InputLine app on iPad and iPhone."
                                   Program="[#HostExe]"
                                   Protocol="udp"
                                   Port="48150"
@@ -67,7 +67,7 @@
             <fire:RemoteAddress Value="100.64.0.0/10" />
             <fire:RemoteAddress Value="fd7a:115c:a1e0::/48" />
           </fire:FirewallException>
-          <!-- So 'couchlink-host clients', 'demo' etc. work in any terminal. -->
+          <!-- So 'inputline-host clients', 'demo' etc. work in any terminal. -->
           <Environment Id="Path" Name="PATH" Value="[INSTALLFOLDER]" Part="last" Action="set" System="yes" Permanent="no" />
         </Component>
         <Component Id="License">
@@ -82,7 +82,7 @@
       </Directory>
     </StandardDirectory>
 
-    <Feature Id="Main" Title="Couchlink">
+    <Feature Id="Main" Title="InputLine">
       <ComponentRef Id="Host" />
       <ComponentRef Id="License" />
       <ComponentRef Id="CoreLicense" />
@@ -91,15 +91,15 @@
 
     <!--
       On a first install or an upgrade (not a repair, which would stop the
-      running service), before the files go in: stop a copy set up with
-      'couchlink-host install' (logon task, firewall rule, running process),
-      and bring its pairings along from the installing user's profile. Errors
-      are ignored: on a fresh PC there is nothing to clean up.
+      running service), before the files go in: stop a copy set up by hand
+      with 'inputline-host install' (logon task, firewall rule, running
+      process), also under the project's earlier name, Couchlink. Errors are
+      ignored: on a fresh PC there is nothing to clean up.
     -->
     <SetProperty Id="RemoveLegacyInstall"
                  Sequence="execute"
                  Before="RemoveLegacyInstall"
-                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Unregister-ScheduledTask -TaskName Couchlink -Confirm:$false -ErrorAction SilentlyContinue; Get-Process couchlink-host -ErrorAction SilentlyContinue | Stop-Process -Force; Remove-NetFirewallRule -DisplayName Couchlink -ErrorAction SilentlyContinue; $src = '[AppDataFolder]Couchlink\couchlink-host.conf'; $dir = '[CommonAppDataFolder]Couchlink\pairing'; $dst = Join-Path $dir 'couchlink-host.conf'; (Test-Path $src) -and -not (Test-Path $dst) -and (New-Item -ItemType Directory -Force -Path $dir) -and (Copy-Item $src $dst -PassThru) | Out-Null; exit 0&quot;" />
+                 Value="&quot;[System64Folder]WindowsPowerShell\v1.0\powershell.exe&quot; -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Unregister-ScheduledTask -TaskName InputLine -Confirm:$false -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName Couchlink -Confirm:$false -ErrorAction SilentlyContinue; Get-Process inputline-host, couchlink-host -ErrorAction SilentlyContinue | Stop-Process -Force; Remove-NetFirewallRule -DisplayName InputLine, Couchlink -ErrorAction SilentlyContinue; exit 0&quot;" />
     <CustomAction Id="RemoveLegacyInstall"
                   BinaryRef="Wix4UtilCA_X64"
                   DllEntry="WixQuietExec64"

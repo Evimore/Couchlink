@@ -1,9 +1,9 @@
-#include "couchlink/timing_stats.h"
+#include "inputline/timing_stats.h"
 
 #include <algorithm>
 #include <cstdio>
 
-namespace couchlink {
+namespace inputline {
 
   void TimingStats::add(std::uint64_t now_us) {
     ++reports_;
@@ -73,4 +73,4 @@ namespace couchlink {
     return text;
   }
 
-}  // namespace couchlink
+}  // namespace inputline

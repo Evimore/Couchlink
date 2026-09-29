@@ -1,7 +1,7 @@
 name: Release
 
-# Publishes Couchlink-Setup-vX.msi (Windows installer), a portable zip of
-# couchlink-host, and the unsigned Couchlink-vX-iOS.ipa.
+# Publishes InputLine-Setup-vX.msi (Windows installer), a portable zip of
+# inputline-host, and the unsigned InputLine-vX-iOS.ipa.
 #
 # Two ways to release:
 # - On GitHub: Actions → Release → Run workflow, and enter a version such as
@@ -56,33 +56,33 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build
         run: |
-          cmake -S . -B build -A x64 -DCOUCHLINK_BUILD_TESTS=OFF "-DCOUCHLINK_VERSION=${{ needs.check.outputs.version }}"
+          cmake -S . -B build -A x64 -DINPUTLINE_BUILD_TESTS=OFF "-DINPUTLINE_VERSION=${{ needs.check.outputs.version }}"
           cmake --build build --config Release -j
       - name: Package
         shell: pwsh
         run: |
-          $dir = "couchlink-$env:TAG-windows-x64"
+          $dir = "inputline-$env:TAG-windows-x64"
           New-Item -ItemType Directory $dir | Out-Null
-          Copy-Item build/host/Release/couchlink-host.exe, build/host/Release/couchlink-sim.exe $dir
+          Copy-Item build/host/Release/inputline-host.exe, build/host/Release/inputline-sim.exe $dir
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, docs/host-setup-windows.md $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
       - name: Build the installer
         run: |
           dotnet tool install --global wix --version 5.0.2
           wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
-          wix build installer/windows/Couchlink.wxs -arch x64 `
+          wix build installer/windows/InputLine.wxs -arch x64 `
             -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
             -d Version=${{ needs.check.outputs.app-version }} -d BinDir=build/host/Release -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}" `
-            -o "Couchlink-Setup-$env:TAG.msi"
+            -o "InputLine-Setup-$env:TAG.msi"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
           path: |
-            Couchlink-Setup-${{ env.TAG }}.msi
-            couchlink-${{ env.TAG }}-windows-x64.zip
+            InputLine-Setup-${{ env.TAG }}.msi
+            inputline-${{ env.TAG }}-windows-x64.zip
 
-  couchlink-ios:
-    name: Couchlink (iOS)
+  inputline-ios:
+    name: InputLine (iOS)
     needs: check
     runs-on: macos-15
     steps:
@@ -90,11 +90,11 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
       - name: Build
-        working-directory: clients/couchlink-ios
+        working-directory: clients/inputline-ios
         run: >
           xcodegen generate &&
           set -o pipefail &&
-          xcodebuild -project Couchlink.xcodeproj -target Couchlink
+          xcodebuild -project InputLine.xcodeproj -target InputLine
           -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/out"
           MARKETING_VERSION=${{ needs.check.outputs.app-version }} CURRENT_PROJECT_VERSION=${{ github.run_number }}
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
@@ -103,16 +103,16 @@ jobs:
       - name: Package unsigned .ipa
         run: |
           mkdir -p "$RUNNER_TEMP/ipa/Payload"
-          cp -R "$RUNNER_TEMP/out/Release-iphoneos/Couchlink.app" "$RUNNER_TEMP/ipa/Payload/"
-          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/Couchlink-$TAG-iOS.ipa" Payload)
+          cp -R "$RUNNER_TEMP/out/Release-iphoneos/InputLine.app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/InputLine-$TAG-iOS.ipa" Payload)
       - uses: actions/upload-artifact@v4
         with:
-          name: couchlink-ios
-          path: Couchlink-${{ env.TAG }}-iOS.ipa
+          name: inputline-ios
+          path: InputLine-${{ env.TAG }}-iOS.ipa
 
   publish:
     name: Publish
-    needs: [check, windows, couchlink-ios]
+    needs: [check, windows, inputline-ios]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -132,5 +132,5 @@ jobs:
             prerelease=""
             case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
             gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "Couchlink $TAG" --generate-notes $prerelease
+              --title "InputLine $TAG" --generate-notes $prerelease
           fi

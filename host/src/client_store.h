@@ -9,14 +9,14 @@
  */
 #pragma once
 
-#include "couchlink/link_protocol.h"
+#include "inputline/link_protocol.h"
 
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
-namespace couchlink {
+namespace inputline {
 
   struct PairedClient {
     std::uint32_t client_id = 0;
@@ -42,10 +42,8 @@ namespace couchlink {
       return path_;
     }
 
-    /** Default location: %APPDATA%\Couchlink\couchlink-host.conf or ~/.config/couchlink/couchlink-host.conf. */
+    /** Default location: %APPDATA%\InputLine\inputline-host.conf or ~/.config/inputline/inputline-host.conf. */
     static std::string default_path();
-    /** Where versions before the installer kept pairings (%APPDATA% on Windows); empty elsewhere. */
-    static std::string legacy_path();
 
   private:
     std::string path_;
@@ -53,4 +51,4 @@ namespace couchlink {
     std::vector<PairedClient> clients_;
   };
 
-}  // namespace couchlink
+}  // namespace inputline

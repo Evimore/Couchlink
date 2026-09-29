@@ -1,6 +1,6 @@
 /**
  * @file desktop.h
- * @brief The parts of couchlink-host that touch the user's desktop: the pairing
+ * @brief The parts of inputline-host that touch the user's desktop: the pairing
  *        code popup, running in the background (as a Windows service or a
  *        logon task), and where it keeps its files.
  *
@@ -12,15 +12,15 @@
 #include <string>
 #include <vector>
 
-namespace couchlink::desktop {
+namespace inputline::desktop {
 
   /** Name of the Windows service the installer sets up. */
-  inline constexpr const char *kServiceName = "Couchlink";
+  inline constexpr const char *kServiceName = "InputLine";
 
   /**
    * @brief Put a pairing code on the PC's screen without blocking the caller.
    *
-   * The user types it into the Couchlink app on the iPad or iPhone. From the
+   * The user types it into the InputLine app on the iPad or iPhone. From the
    * service, it goes to the signed-in user's screen.
    */
   void show_pairing_code(const std::string &client_name, const std::string &code);
@@ -32,7 +32,7 @@ namespace couchlink::desktop {
   bool is_elevated();
 
   /**
-   * @brief Where the background copy keeps its files: C:\ProgramData\Couchlink
+   * @brief Where the background copy keeps its files: C:\ProgramData\InputLine
    *        on Windows (the log, options.txt, and pairings in its 'pairing'
    *        folder). Empty on other platforms.
    */
@@ -46,7 +46,7 @@ namespace couchlink::desktop {
    */
   bool prepare_data_dirs();
 
-  /** Whether the installer's Couchlink service exists. */
+  /** Whether the installer's InputLine service exists. */
   bool service_installed();
 
   /**
@@ -73,4 +73,4 @@ namespace couchlink::desktop {
   /** Undo install(). Paired devices are kept. */
   int uninstall();
 
-}  // namespace couchlink::desktop
+}  // namespace inputline::desktop

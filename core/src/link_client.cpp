@@ -1,6 +1,6 @@
-#include "couchlink/link_client.h"
+#include "inputline/link_client.h"
 
-namespace couchlink::link {
+namespace inputline::link {
 
   namespace {
     std::uint64_t random_u64(const RandomSource &random) {
@@ -249,4 +249,4 @@ namespace couchlink::link {
     }
   }
 
-}  // namespace couchlink::link
+}  // namespace inputline::link
