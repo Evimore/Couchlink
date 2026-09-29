@@ -52,10 +52,16 @@ namespace inputline::net {
         if (candidate == kInvalidSocket) {
           continue;
         }
+#ifndef _WIN32
         if (type == SOCK_STREAM) {
+          // Rebind straight after a restart despite old connections in
+          // TIME_WAIT. Not on Windows: there SO_REUSEADDR lets a second
+          // program share a port that is already listening, and Windows
+          // rebinds after TIME_WAIT anyway.
           int reuse = 1;
           setsockopt(candidate, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&reuse), sizeof(reuse));
         }
+#endif
         if (entry->ai_family == AF_INET6) {
           // Accept IPv4 clients on an IPv6 socket too ("::" means every address).
           int v6_only = 0;

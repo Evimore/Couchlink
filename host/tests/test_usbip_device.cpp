@@ -275,9 +275,29 @@ namespace {
     CHECK(wait_for([&] {
       return server.is_attached(a) && server.is_attached(b);
     }));
+    const std::uint16_t port = server.port();
     server.stop();  // must unblock both connection threads
     CHECK(!client_a.read_reply().has_value());
     server.stop();  // idempotent
+
+    // A restart can take the same port straight away, despite the
+    // connections it just closed.
+    usbip::Server restarted;
+    CHECK(restarted.start("127.0.0.1", port));
+    restarted.stop();
+  }
+
+  /**
+   * A second server can't share a port that is listening: 'demo' next to
+   * the service must move to another port rather than take connections
+   * meant for the service (SO_REUSEADDR allows that on Windows).
+   */
+  void test_port_not_shared() {
+    usbip::Server first;
+    CHECK(first.start("127.0.0.1", 0));
+    usbip::Server second;
+    CHECK(!second.start("127.0.0.1", first.port()));
+    first.stop();
   }
 
   /** usbip's messages reach the log only if run_process captures them. */
@@ -303,6 +323,7 @@ int main() {
   test_descriptors_and_handshake();
   test_interrupt_transfers();
   test_server_restart_and_multiple_devices();
+  test_port_not_shared();
   test_run_process_captures_output();
   return test::report_and_exit_code();
 }
