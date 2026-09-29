@@ -284,7 +284,8 @@ namespace {
       client_name.c_str(), code.c_str(), code.size() > 3 ? code.c_str() + 3 : ""
     );
     std::fflush(stdout);
-    log::info("pairing code shown for '", client_name, "'");
+    // Also in the log, for when a fullscreen game hides the popup. It only works for 2 minutes.
+    log::info("pairing code for '", client_name, "': ", code);
     desktop::show_pairing_code(client_name, code);
   }
 
@@ -439,7 +440,12 @@ namespace {
     std::signal(SIGTERM, on_signal);
 
     usbip::Server usbip_server;
-    if (!usbip_server.start("127.0.0.1", args.usbip_port)) {
+    bool usbip_started = usbip_server.start("127.0.0.1", args.usbip_port);
+    // The demo can run next to the Couchlink service: take the next free port.
+    for (int offset = 1; !usbip_started && args.command == "demo" && offset <= 4; ++offset) {
+      usbip_started = usbip_server.start("127.0.0.1", static_cast<std::uint16_t>(args.usbip_port + offset));
+    }
+    if (!usbip_started) {
       log::error("is another USB/IP server using port ", args.usbip_port, "? Try --usbip-port");
       return 1;
     }

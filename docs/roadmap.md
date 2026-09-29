@@ -18,13 +18,14 @@
 - [x] Automatic discovery: `couchlink-host` announces the PC over DNS-SD (`_couchlink._udp`); Couchlink lists it and follows a paired PC to a new address
 - [x] Couchlink remembers every address a PC answered on (home network, VPN) and tries them in turn
 - [x] Releases from GitHub's website: Actions → Release → Run workflow
+- [x] Windows installer (MSI): `couchlink-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
 ## Phases
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Couchlink app with background Bluetooth; timing measured on the device and at the PC | **Done** |
-| 1 | PC program: automatic discovery on the network (done), installer that includes usbip-win2, update check, code signing | In progress |
+| 1 | PC program: automatic discovery (done), installer (done; bundling usbip-win2 next), update check, code signing | In progress |
 | 2 | Couchlink release: TestFlight, then a free App Store app | Later |
 | 3 | More bridges: desktop (Windows, Linux, Mac, Steam Deck; USB, Puck or Bluetooth), Android and Android TV | |
 | 4 | Optional: offer the host side to streaming hosts (Vibepollo, Apollo, Sunshine) as a built-in feature | |

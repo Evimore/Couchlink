@@ -1,6 +1,6 @@
 # Install Couchlink on iPad or iPhone
 
-Couchlink isn't on the App Store yet. Until it is, you install it yourself with a free Apple ID. You don't need a Mac: CI builds an unsigned `Couchlink-iOS.ipa`, and [Sideloadly](https://sideloadly.io) on Windows signs it with your Apple ID and installs it.
+Couchlink isn't on the App Store yet. Until it is, you install it yourself with a free Apple ID. You don't need a Mac: each release includes an unsigned `.ipa` of the app, and [Sideloadly](https://sideloadly.io) on Windows signs it with your Apple ID and installs it.
 
 The same app runs on iPad and iPhone (iOS / iPadOS 15 or later).
 
@@ -13,8 +13,9 @@ The same app runs on iPad and iPhone (iOS / iPadOS 15 or later).
 
 ## 1. Download the app
 
-1. Open the repository's **Releases** page and download `Couchlink-iOS.ipa`. Before the first release, open **Actions**, choose the latest green **CI** run on `main`, and download the **`Couchlink-iOS.ipa`** artifact (you must be signed in to GitHub).
-2. GitHub delivers artifacts as a `.zip`. Extract it to get the `.ipa`.
+Open the [Releases](https://github.com/orel-mor/Couchlink/releases) page and download `Couchlink-vX.Y.Z-iOS.ipa` from the latest release.
+
+> Want the very latest development build instead? Open **Actions**, choose the latest green **CI** run, and download the **`Couchlink-iOS.ipa`** artifact (you must be signed in to GitHub). It arrives as a `.zip`; extract it to get the `.ipa`.
 
 ## 2. Install Sideloadly and Apple's drivers
 
@@ -90,5 +91,5 @@ The Apple TV doesn't see the controller, so the streaming app's controller short
 ## If something goes wrong
 
 1. In Couchlink, tap **Share report**.
-2. On the PC, grab `%LOCALAPPDATA%\Couchlink\couchlink-host.log`.
+2. On the PC, grab `C:\ProgramData\Couchlink\couchlink-host.log`.
 3. Open an issue with both, and describe what you did.

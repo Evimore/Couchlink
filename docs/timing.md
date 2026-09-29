@@ -13,11 +13,7 @@ Couchlink measures how evenly controller reports arrive at both ends of the link
 
 ## Measure it yourself
 
-1. On the PC, install with statistics on (from **Terminal (Admin)**):
-   ```powershell
-   couchlink-host install --stats
-   ```
-   The `stats:` lines go to `%LOCALAPPDATA%\Couchlink\couchlink-host.log`.
+1. On the PC, turn statistics on: add a line `--stats` to `C:\ProgramData\Couchlink\options.txt` (as administrator), then run `Restart-Service Couchlink` in **Terminal (Admin)**. The `stats:` lines go to `C:\ProgramData\Couchlink\couchlink-host.log`.
 2. In Couchlink, tap **Reset timing**, then use the controller for about 2 minutes with Couchlink in front: sticks, both trackpads, a bit of gyro. The **Foreground** line fills in.
 3. Switch to your streaming app and play for at least 10 minutes.
 4. Switch back to Couchlink and tap **Share report**. Compare it with the `stats:` lines from the PC's log.

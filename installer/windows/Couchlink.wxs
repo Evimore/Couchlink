@@ -29,7 +29,6 @@
     <Property Id="ARPPRODUCTICON" Value="CouchlinkIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://github.com/orel-mor/Couchlink" />
     <Property Id="ARPHELPLINK" Value="https://github.com/orel-mor/Couchlink/blob/main/docs/host-setup-windows.md" />
-    <Property Id="ARPNOMODIFY" Value="1" />
 
     <!-- usbip-win2 attaches the virtual controller; without it nothing reaches Steam. -->
     <Property Id="USBIPEXE">
