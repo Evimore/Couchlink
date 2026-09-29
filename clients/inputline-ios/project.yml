@@ -42,8 +42,8 @@ targets:
         UIRequiresFullScreen: false
         UIBackgroundModes:
           - bluetooth-central
-        NSBluetoothAlwaysUsageDescription: InputLine connects to your Steam Controller over Bluetooth and forwards it to your gaming PC.
-        NSLocalNetworkUsageDescription: InputLine finds your gaming PC on the network and sends your controller's input to it.
+        NSBluetoothAlwaysUsageDescription: InputLine connects to your Steam Controller over Bluetooth and forwards it to your PC.
+        NSLocalNetworkUsageDescription: InputLine finds your PC on the network and sends your controller's input to it.
         NSBonjourServices:
           - _inputline._udp
         ITSAppUsesNonExemptEncryption: false

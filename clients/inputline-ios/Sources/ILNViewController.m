@@ -100,12 +100,12 @@
     UILabel *title = [self labelWithStyle:UIFontTextStyleLargeTitle color:[UIColor labelColor]];
     title.text = @"InputLine";
     [stack addArrangedSubview:title];
-    [stack addArrangedSubview:[self note:@"Your Steam Controller, with full Steam Input on your gaming PC, next to any streaming app. "
+    [stack addArrangedSubview:[self note:@"Your Steam Controller, with full Steam Input on your PC, next to any streaming app. "
                                           "Set it up here, then switch to your streaming app: InputLine keeps working in the background.\n\nDon't swipe InputLine away in the app switcher: iOS then disconnects the controller and doesn't restart InputLine until you open it again."]];
     [stack setCustomSpacing:24 afterView:stack.arrangedSubviews.lastObject];
 
     // PC
-    [stack addArrangedSubview:[self heading:@"Gaming PC"]];
+    [stack addArrangedSubview:[self heading:@"PC"]];
     _addressField = [[UITextField alloc] init];
     _addressField.borderStyle = UITextBorderStyleRoundedRect;
     _addressField.placeholder = @"PC address, e.g. 192.168.1.20";

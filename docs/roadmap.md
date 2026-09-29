@@ -40,10 +40,11 @@
 - [ ] Settle whether Steam uses the IMU quaternion in report `0x42`. If it does, compute orientation host-side from gyro and accel instead of sending identity.
 - [ ] Haptics end to end: trackpad clicks and rumble felt on the controller
 - [ ] Measure input latency against Steam Link (240 fps camera, same TV)
+- [ ] App: while connected, the PC's Connect button becomes Disconnect, and the address field is replaced by "Connected to <PC name>"
 
 ## Later
 
 - [ ] Password-authenticated pairing (a PAKE such as CPace), so even an active attacker during pairing learns nothing
-- [ ] Windows service mode and a tray icon for `inputline-host`
+- [ ] A tray icon for `inputline-host` with its status (the service and the pairing notification are done)
 - [ ] 2015 Steam Controller (BLE `0x1106`, wired `28DE:1102` persona)
 - [ ] Battery reports over Bluetooth

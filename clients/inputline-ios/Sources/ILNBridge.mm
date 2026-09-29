@@ -512,7 +512,7 @@ namespace {
 {
     switch (_state) {
         case ILNLinkStateNoPC:
-            return @"Enter your gaming PC's address.";
+            return @"Enter your PC's address.";
         case ILNLinkStateSearching:
             return [NSString stringWithFormat:@"Looking for inputline-host on %@...", _address];
         case ILNLinkStateNotFound:
