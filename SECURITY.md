@@ -16,6 +16,8 @@
 - **Some metadata stays visible:** that a device talks to the PC, how often, and the device's name in `Hello` and pairing messages.
 - **Discovery announces the PC's name** and link port on the local network (DNS-SD `_inputline._udp`), like any AirPlay or printer service. `--no-discovery` turns it off.
 - **`inputline-host` needs administrator/root rights** to run `usbip attach`; the Windows installer runs it as a service (LocalSystem). Its USB/IP server listens on 127.0.0.1 only. The service reads extra options from `C:\ProgramData\InputLine\options.txt`, a folder only administrators can change.
+- **Update check:** once a day the service asks GitHub (`api.github.com`) for InputLine's public list of releases, to tell you when a newer version is out. Nothing about your PC or devices is sent; GitHub sees the request like any web visit. `--no-update-check` in `options.txt` turns it off.
+- **The code that reads input from the network or other programs** (the link protocol, the link server, the local USB/IP server and the update check) is fuzzed in CI.
 - **Firmware updates, factory reset, and serial, pairing and radio writes from the PC are never forwarded** to your physical controller (see `core/src/feature_responder.cpp`). Steam cannot update the real controller's firmware or change its identity through the link; plug it into the PC for firmware updates. Settings, haptics, turning it off and calibration do reach it.
 
 ## Reporting a vulnerability

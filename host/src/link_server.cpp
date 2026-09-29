@@ -143,6 +143,7 @@ namespace inputline {
     status.sessions = sessions_.size();
     for (const auto &[id, session] : sessions_) {
       status.controllers += session.controllers.size();
+      status.clients.push_back(session.client.name);
     }
     return status;
   }

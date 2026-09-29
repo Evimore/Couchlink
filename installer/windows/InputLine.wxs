@@ -82,8 +82,24 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- Start menu: shows the InputLine icon again after "Hide this icon". -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="TrayShortcut"
+                  Name="InputLine"
+                  Description="Show the InputLine icon and status"
+                  Target="[#HostExe]"
+                  Arguments="tray --show"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="InputLineIcon"
+                  Show="minimized" />
+        <RegistryValue Root="HKLM" Key="Software\InputLine" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
     <Feature Id="Main" Title="InputLine">
       <ComponentRef Id="Host" />
+      <ComponentRef Id="StartMenuShortcut" />
       <ComponentRef Id="License" />
       <ComponentRef Id="CoreLicense" />
       <ComponentRef Id="ThirdParty" />

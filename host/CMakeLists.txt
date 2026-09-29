@@ -8,7 +8,10 @@ add_library(inputline_host STATIC
   src/link_server.cpp
   src/log.cpp
   src/net.cpp
+  src/status_file.cpp
   src/steam_controller_device.cpp
+  src/tray.cpp
+  src/update_check.cpp
   src/usbip_attach.cpp
   src/usbip_server.cpp
 )
@@ -16,7 +19,7 @@ target_include_directories(inputline_host PUBLIC src)
 target_link_libraries(inputline_host PUBLIC inputline_core Threads::Threads)
 target_compile_options(inputline_host PRIVATE ${INPUTLINE_WARNINGS})
 if(WIN32)
-  target_link_libraries(inputline_host PUBLIC ws2_32 user32 advapi32 wtsapi32 shell32)
+  target_link_libraries(inputline_host PUBLIC ws2_32 user32 advapi32 wtsapi32 shell32 winhttp userenv)
   target_compile_definitions(inputline_host PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
 endif()
 
@@ -49,6 +52,11 @@ if(INPUTLINE_BUILD_TESTS)
   target_link_libraries(inputline_usbip_tests PRIVATE inputline_host)
   target_include_directories(inputline_usbip_tests PRIVATE tests)
   add_test(NAME inputline_usbip_tests COMMAND inputline_usbip_tests)
+
+  add_executable(inputline_host_unit_tests tests/test_host_units.cpp)
+  target_link_libraries(inputline_host_unit_tests PRIVATE inputline_host)
+  target_include_directories(inputline_host_unit_tests PRIVATE tests)
+  add_test(NAME inputline_host_unit_tests COMMAND inputline_host_unit_tests)
 
   add_executable(inputline_link_tests tests/test_link_server.cpp)
   target_link_libraries(inputline_link_tests PRIVATE inputline_host)

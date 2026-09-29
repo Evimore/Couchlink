@@ -1,6 +1,8 @@
 #include "desktop.h"
 
 #include "log.h"
+#include "tray.h"
+#include "update_check.h"
 
 #include <algorithm>
 #include <atomic>
@@ -25,39 +27,41 @@ namespace inputline::desktop {
 
   namespace {
     std::atomic<bool> g_service_mode {false};
+  }  // namespace
 
-    std::wstring widen(const std::string &text) {
-      if (text.empty()) {
-        return {};
-      }
-      const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-      std::wstring out(static_cast<std::size_t>(length), L'\0');
-      MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length);
-      return out;
+  std::wstring widen(const std::string &text) {
+    if (text.empty()) {
+      return {};
     }
+    const int length = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    std::wstring out(static_cast<std::size_t>(length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length);
+    return out;
+  }
 
-    std::string narrow(const std::wstring &text) {
-      if (text.empty()) {
-        return {};
-      }
-      const int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-      std::string out(static_cast<std::size_t>(length), '\0');
-      WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length, nullptr, nullptr);
-      return out;
+  std::string narrow(const std::wstring &text) {
+    if (text.empty()) {
+      return {};
     }
+    const int length = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(length), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), length, nullptr, nullptr);
+    return out;
+  }
 
-    std::string executable_path() {
-      std::wstring buffer(MAX_PATH, L'\0');
-      for (;;) {
-        const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (length < buffer.size()) {
-          buffer.resize(length);
-          return narrow(buffer);
-        }
-        buffer.resize(buffer.size() * 2);
+  std::string executable_path() {
+    std::wstring buffer(MAX_PATH, L'\0');
+    for (;;) {
+      const DWORD length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+      if (length < buffer.size()) {
+        buffer.resize(length);
+        return narrow(buffer);
       }
+      buffer.resize(buffer.size() * 2);
     }
+  }
 
+  namespace {
     /** A PowerShell single-quoted string literal. */
     std::string ps_quote(const std::string &text) {
       std::string out = "'";
@@ -70,28 +74,30 @@ namespace inputline::desktop {
       out.push_back('\'');
       return out;
     }
+  }  // namespace
 
-    /** One argument, quoted for the Windows command line if needed (CommandLineToArgvW rules). */
-    std::string arg_quote(const std::string &arg) {
-      if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos) {
-        return arg;
-      }
-      std::string out = "\"";
-      std::size_t backslashes = 0;
-      for (char c : arg) {
-        if (c == '\\') {
-          ++backslashes;
-          continue;
-        }
-        out.append(c == '"' ? backslashes * 2 + 1 : backslashes, '\\');
-        backslashes = 0;
-        out.push_back(c);
-      }
-      out.append(backslashes * 2, '\\');
-      out.push_back('"');
-      return out;
+  /** One argument, quoted for the Windows command line if needed (CommandLineToArgvW rules). */
+  std::string arg_quote(const std::string &arg) {
+    if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos) {
+      return arg;
     }
+    std::string out = "\"";
+    std::size_t backslashes = 0;
+    for (char c : arg) {
+      if (c == '\\') {
+        ++backslashes;
+        continue;
+      }
+      out.append(c == '"' ? backslashes * 2 + 1 : backslashes, '\\');
+      backslashes = 0;
+      out.push_back(c);
+    }
+    out.append(backslashes * 2, '\\');
+    out.push_back('"');
+    return out;
+  }
 
+  namespace {
     /** Run a PowerShell script in this console, passed as -EncodedCommand to avoid quoting issues. */
     int run_powershell(const std::string &script) {
       const std::wstring wide = widen(script);
@@ -159,38 +165,37 @@ namespace inputline::desktop {
      * Start 'inputline-host notify' in the signed-in user's session (from the
      * service) or next to us, without waiting for it.
      */
-    bool start_notifier(const std::string &title, const std::string &text) {
-      const std::string exe = executable_path();
-      std::wstring command_line = widen(
-        arg_quote(exe) + " notify " + arg_quote(title) + " " + arg_quote(text) + " " + std::to_string(kPairingSeconds)
-      );
-      std::wstring desktop = L"winsta0\\default";
+    bool start_notifier(const std::string &title, const std::string &text, const std::string &url, int seconds) {
+      std::string arguments = "notify " + arg_quote(title) + " " + arg_quote(text) + " " + std::to_string(seconds);
+      if (!url.empty()) {
+        arguments += " " + arg_quote(url);
+      }
+      if (g_service_mode) {
+        // A service has no desktop of its own: run it as the user signed in at the PC.
+        return tray::launch_in_user_session(arguments);
+      }
+      std::wstring command_line = widen(arg_quote(executable_path()) + " " + arguments);
       STARTUPINFOW startup {};
       startup.cb = sizeof(startup);
-      startup.lpDesktop = desktop.data();
       PROCESS_INFORMATION process {};
-      BOOL started = FALSE;
-      if (g_service_mode) {
-        // A service has no desktop of its own: run the notifier as the user
-        // who is signed in at the PC, in their session.
-        const DWORD session = WTSGetActiveConsoleSessionId();
-        HANDLE token = nullptr;
-        if (session == 0xFFFFFFFF || !WTSQueryUserToken(session, &token)) {
-          log::debug("pairing: no signed-in user for a notification (error ", GetLastError(), ")");
-          return false;
-        }
-        started = CreateProcessAsUserW(token, nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
-        CloseHandle(token);
-      } else {
-        started = CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
-      }
-      if (!started) {
-        log::debug("pairing: cannot start the notification (error ", GetLastError(), ")");
+      if (!CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+        log::debug("cannot start the notification (error ", GetLastError(), ")");
         return false;
       }
       CloseHandle(process.hThread);
       CloseHandle(process.hProcess);
       return true;
+    }
+
+    struct NotifierState {
+      std::wstring text;
+      std::wstring url;
+    };
+
+    /** Only ever open InputLine's own pages. */
+    bool safe_url(const std::wstring &url) {
+      const std::wstring prefix = widen(std::string(update::kRepositoryUrl) + "/");
+      return url.compare(0, prefix.size(), prefix) == 0;
     }
 
     /** Window of the notifier: the tray icon's messages and its timer. */
@@ -200,17 +205,29 @@ namespace inputline::desktop {
         return 0;
       }
       if (message == kNotifyIconMessage) {
-        // Clicking the icon or the notification shows the code again.
+        // Clicking the icon or the notification opens its page or shows the text again.
         const UINT event = LOWORD(lparam);
         if (event == NIN_SELECT || event == NIN_KEYSELECT || event == NIN_BALLOONUSERCLICK) {
-          const auto *text = reinterpret_cast<const std::wstring *>(GetWindowLongPtrW(window, GWLP_USERDATA));
-          MessageBoxW(window, text->c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+          const auto *state = reinterpret_cast<const NotifierState *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+          if (!state->url.empty() && safe_url(state->url)) {
+            ShellExecuteW(nullptr, L"open", state->url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+          } else {
+            MessageBoxW(window, state->text.c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+          }
         }
         return 0;
       }
       return DefWindowProcW(window, message, wparam, lparam);
     }
   }  // namespace
+
+  bool service_mode() {
+    return g_service_mode;
+  }
+
+  bool show_notification(const std::string &title, const std::string &text, const std::string &url) {
+    return start_notifier(title, text, url, 30);
+  }
 
   void show_pairing_code(const std::string &client_name, const std::string &code) {
     std::string spaced = code;
@@ -223,7 +240,7 @@ namespace inputline::desktop {
     const std::string title = "InputLine pairing code: " + spaced;
     const std::string text = name + " wants to connect a Steam Controller to this PC. Enter the code in InputLine on it. "
                                     "It works for 2 minutes. Didn't ask for this? Ignore it.";
-    if (start_notifier(title, text)) {
+    if (start_notifier(title, text, {}, kPairingSeconds)) {
       return;
     }
 
@@ -261,8 +278,8 @@ namespace inputline::desktop {
   }
 
   int run_notifier() {
-    // inputline-host notify TITLE TEXT SECONDS, read as UTF-16 so names in
-    // any language survive.
+    // inputline-host notify TITLE TEXT SECONDS [URL], read as UTF-16 so names
+    // in any language survive.
     int count = 0;
     LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &count);
     if (argv == nullptr || count < 4) {
@@ -272,9 +289,17 @@ namespace inputline::desktop {
       return 2;
     }
     const std::wstring title = argv[2];
-    std::wstring text = argv[3];
+    NotifierState state;
+    state.text = argv[3];
     const int seconds = count > 4 ? std::max(5, std::min(600, _wtoi(argv[4]))) : kPairingSeconds;
+    state.url = count > 5 && safe_url(argv[5]) ? argv[5] : L"";
     LocalFree(argv);
+
+    // With the InputLine icon showing, the notification comes from it.
+    if (tray::forward_notification(title, state.text, state.url)) {
+      return 0;
+    }
+    const std::wstring &text = state.text;
 
     const HINSTANCE instance = GetModuleHandleW(nullptr);
     WNDCLASSW window_class {};
@@ -286,7 +311,7 @@ namespace inputline::desktop {
     if (window == nullptr) {
       return 1;
     }
-    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&text));
+    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&state));
 
     NOTIFYICONDATAW icon {};
     icon.cbSize = sizeof(icon);
@@ -313,12 +338,9 @@ namespace inputline::desktop {
 
     // Keep the icon (and so the notification in the notification centre)
     // for as long as the code works.
+    // Also quit when the service stops, so an upgrade can replace this program.
     SetTimer(window, 1, static_cast<UINT>(seconds) * 1000, nullptr);
-    MSG message;
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-      TranslateMessage(&message);
-      DispatchMessageW(&message);
-    }
+    tray::run_message_loop();
     Shell_NotifyIconW(NIM_DELETE, &icon);
     DestroyWindow(window);
     for (HICON handle : {icon.hIcon, icon.hBalloonIcon}) {
@@ -418,15 +440,20 @@ namespace inputline::desktop {
     void report_status(DWORD state, DWORD exit_code = NO_ERROR, DWORD wait_hint = 0) {
       g_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
       g_status.dwCurrentState = state;
-      g_status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+      g_status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN | SERVICE_ACCEPT_SESSIONCHANGE : 0;
       g_status.dwWin32ExitCode = exit_code == NO_ERROR ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
       g_status.dwServiceSpecificExitCode = exit_code;
       g_status.dwWaitHint = wait_hint;
       SetServiceStatus(g_status_handle, &g_status);
     }
 
-    DWORD WINAPI service_control(DWORD control, DWORD, LPVOID, LPVOID) {
+    DWORD WINAPI service_control(DWORD control, DWORD event_type, LPVOID event_data, LPVOID) {
       switch (control) {
+        case SERVICE_CONTROL_SESSIONCHANGE:
+          if (event_data != nullptr) {
+            tray::session_changed(event_type, static_cast<const WTSSESSION_NOTIFICATION *>(event_data)->dwSessionId);
+          }
+          return NO_ERROR;
         case SERVICE_CONTROL_STOP:
         case SERVICE_CONTROL_SHUTDOWN:
           report_status(SERVICE_STOP_PENDING, NO_ERROR, 5000);
@@ -570,6 +597,10 @@ namespace inputline::desktop {
 #else
 
   void show_pairing_code(const std::string &, const std::string &) {}
+
+  bool show_notification(const std::string &, const std::string &, const std::string &) {
+    return false;
+  }
 
   int run_notifier() {
     return 1;

@@ -13,6 +13,7 @@ endfunction()
 
 inputline_fuzzer(fuzz_link_protocol inputline_core)
 inputline_fuzzer(fuzz_link_server inputline_host)
+inputline_fuzzer(fuzz_update_check inputline_host)
 if(NOT WIN32)
   inputline_fuzzer(fuzz_usbip_server inputline_host)
 endif()

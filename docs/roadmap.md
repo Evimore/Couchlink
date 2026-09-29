@@ -21,6 +21,7 @@
 - [x] Protocol version 2: X25519 pairing, ChaCha20-Poly1305 encryption, version negotiation with frozen wire-format tests
 - [x] Disconnect / Connect in the app: hand the controller back to the iPad; it goes back to the PC when switched off and on
 - [x] App: while connected, the PC section shows "Connected to <PC>" and a Disconnect button
+- [x] Tray icon with status, the pairing code and update notices; the service checks GitHub for new versions; the app says which side runs an older version
 - [x] Fuzzing in CI: link protocol, link server and USB/IP server
 - [x] Windows installer (MSI): `inputline-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
@@ -29,7 +30,7 @@
 | Phase | What | Status |
 |---|---|---|
 | 0 | InputLine app with background Bluetooth; timing measured on the device and at the PC | **Done** |
-| 1 | PC program: automatic discovery (done), installer (done; bundling usbip-win2 next), update check, code signing | In progress |
+| 1 | PC program: automatic discovery (done), installer (done; bundling usbip-win2 next), update check (done), code signing | In progress |
 | 2 | InputLine release: TestFlight, then a free App Store app | Later |
 | 3 | More bridges: desktop (Windows, Linux, Mac, Steam Deck; USB, Puck or Bluetooth), Android and Android TV | |
 | 4 | Optional: offer the host side to streaming hosts (Vibepollo, Apollo, Sunshine) as a built-in feature | |
@@ -46,6 +47,5 @@
 ## Later
 
 - [ ] Password-authenticated pairing (a PAKE such as CPace), so even an active attacker during pairing learns nothing
-- [ ] A tray icon for `inputline-host` with its status (the service and the pairing notification are done)
 - [ ] 2015 Steam Controller (BLE `0x1106`, wired `28DE:1102` persona)
 - [ ] Battery reports over Bluetooth

@@ -27,7 +27,14 @@ namespace inputline::desktop {
   void show_pairing_code(const std::string &client_name, const std::string &code);
 
   /**
-   * @brief The hidden 'notify TITLE TEXT SECONDS' command: show a Windows
+   * @brief A Windows notification from InputLine (from the service, on the
+   *        signed-in user's screen). Clicking it opens @p url, if given.
+   * @return false if it could not be shown.
+   */
+  bool show_notification(const std::string &title, const std::string &text, const std::string &url = {});
+
+  /**
+   * @brief The hidden 'notify TITLE TEXT SECONDS [URL]' command: show a Windows
    *        notification with the InputLine tray icon, and keep the icon for
    *        SECONDS. show_pairing_code() starts it in the user's session.
    * @return Process exit code.
@@ -81,5 +88,20 @@ namespace inputline::desktop {
 
   /** Undo install(). Paired devices are kept. */
   int uninstall();
+
+#ifdef _WIN32
+  /** UTF-8 to UTF-16 and back. */
+  std::wstring widen(const std::string &text);
+  std::string narrow(const std::wstring &text);
+
+  /** This program's full path. */
+  std::string executable_path();
+
+  /** One argument, quoted for a Windows command line if needed. */
+  std::string arg_quote(const std::string &arg);
+
+  /** Whether this process is the InputLine service. */
+  bool service_mode();
+#endif
 
 }  // namespace inputline::desktop

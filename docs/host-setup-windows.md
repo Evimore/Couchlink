@@ -19,7 +19,8 @@ The installer:
 - installs `inputline-host` to `C:\Program Files\InputLine`,
 - runs it as the **InputLine** service: it starts with Windows, runs in the background, and restarts by itself if something goes wrong,
 - allows UDP port 48150 through the Windows Firewall, from your local network and Tailscale only,
-- announces the PC on your local network, so the InputLine app finds it without you typing an address.
+- announces the PC on your local network, so the InputLine app finds it without you typing an address,
+- shows the **InputLine icon** in the taskbar's notification area, next to the clock. Its menu shows whether a device is connected, opens the log, and tells you when a newer InputLine is out (the service checks GitHub once a day). *Hide this icon* hides it; open **InputLine** from the Start menu to show it again.
 
 Its files are in `C:\ProgramData\InputLine`: the log (`inputline-host.log`), optional settings (`options.txt`), and your paired devices (in the `pairing` folder, which only administrators can open).
 
@@ -28,7 +29,7 @@ Its files are in `C:\ProgramData\InputLine`: the log (`inputline-host.log`), opt
 
 ## 3. Pair your iPad or iPhone
 
-Open InputLine on the iPad or iPhone and tap your PC under **Found on this network** (or enter its address and tap **Connect**). The first time, a Windows notification on the PC shows a 6-digit code; type it into InputLine. (Missed it? Click the InputLine icon in the taskbar's notification area to see it again.) From then on, the device connects by itself.
+Open InputLine on the iPad or iPhone and tap your PC under **Found on this network** (or enter its address and tap **Connect**). The first time, a Windows notification on the PC shows a 6-digit code; type it into InputLine. (Missed it? Press Windows key + N to see your notifications.) From then on, the device connects by itself.
 
 Not at the PC? Open your streaming app first: the notification is on the PC's screen, so it shows in the stream. Then switch back to InputLine and enter it.
 
@@ -62,6 +63,7 @@ Put extra options in `C:\ProgramData\InputLine\options.txt` (edit it as administ
 | `--verbose` | More detail in the log |
 | `--no-remote-pairing` | Don't let devices ask for a pairing code; pair with `inputline-host pair` instead (stop the service first) |
 | `--no-discovery` | Don't announce the PC on the local network |
+| `--no-update-check` | Don't check GitHub once a day for a newer InputLine |
 | `--block-setting N` | Never pass controller setting N from Steam to the physical controller |
 | `--name NAME` | The name the app shows for this PC |
 

@@ -8,6 +8,9 @@
 #include "link_server.h"
 #include "log.h"
 #include "net.h"
+#include "status_file.h"
+#include "tray.h"
+#include "update_check.h"
 #include "inputline/feature_responder.h"
 #include "inputline/link_client.h"
 #include "inputline/test_pattern.h"
@@ -21,6 +24,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -59,6 +63,7 @@ namespace {
     bool verbose = false;
     bool remote_pairing = true;
     bool discovery = true;
+    bool update_check = true;
     bool hide_console = false;
     std::string log_file;
     int stats_seconds = 0;
@@ -97,6 +102,7 @@ namespace {
       "  --pin CODE       With 'pair': use this code instead of a random one\n"
       "  --no-remote-pairing  Only pair through 'inputline-host pair'\n"
       "  --no-discovery   Don't announce this PC on the local network\n"
+      "  --no-update-check  (Service) Don't check GitHub for a newer InputLine\n"
       "  --log PATH       Write the log to a file\n"
       "  --stats          Log report timing every 10 s (rate, gaps)\n"
       "  --block-setting N  Never pass controller setting N from Steam to the\n"
@@ -184,6 +190,8 @@ namespace {
         args.remote_pairing = false;
       } else if (arg == "--no-discovery") {
         args.discovery = false;
+      } else if (arg == "--no-update-check") {
+        args.update_check = false;
       } else if (arg == "--hide-console") {
         args.hide_console = true;
       } else if (arg == "--stats") {
@@ -263,6 +271,18 @@ namespace {
       }
     }
     return true;
+  }
+
+  std::string read_first_line(const std::string &path) {
+    std::ifstream in(path);
+    std::string line;
+    std::getline(in, line);
+    return line.size() > 64 ? std::string() : line;
+  }
+
+  void write_first_line(const std::string &path, const std::string &line) {
+    std::ofstream out(path, std::ios::trunc);
+    out << line << "\n";
   }
 
   void show_code(const std::string &client_name, const std::string &code) {
@@ -489,12 +509,54 @@ namespace {
       advertiser.start(options.host_name, server->port());
     }
 
+    // As a service: the tray icon, its status file, and the daily update check.
+    const bool service = args.command == "service";
+    const std::string status_path = desktop::data_dir().empty() ? std::string() : desktop::data_dir() + "\\status.txt";
+    update::Checker updates(INPUTLINE_VERSION);
+    if (service) {
+      tray::start_agents();
+      if (args.update_check) {
+        updates.start();
+      }
+    }
+    std::string update_announced = read_first_line(desktop::data_dir() + "\\update-notified.txt");
+
     log::info("ready: ", store.list().size(), " paired client(s). Press Ctrl+C to stop.");
+    auto next_status = std::chrono::steady_clock::now();
     while (!g_quit) {
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      if (!service || status_path.empty() || std::chrono::steady_clock::now() < next_status) {
+        continue;
+      }
+      next_status = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+      const auto link = server->status();
+      ServiceStatus status;
+      status.version = INPUTLINE_VERSION;
+      status.time = static_cast<std::int64_t>(std::time(nullptr));
+      status.controllers = link.controllers;
+      status.devices = link.clients;
+      if (const auto release = updates.available()) {
+        status.update_version = release->version;
+        status.update_url = release->url;
+        if (release->version != update_announced) {
+          // Once per new version.
+          update_announced = release->version;
+          write_first_line(desktop::data_dir() + "\\update-notified.txt", update_announced);
+          log::info("InputLine ", release->version, " is available: ", release->url);
+          desktop::show_notification("InputLine " + release->version + " is available",
+                                     "You have " INPUTLINE_VERSION ". Click to open the download page.", release->url);
+        }
+      }
+      write_status_file(status_path, status);
     }
 
     log::info("shutting down");
+    if (service) {
+      updates.stop();
+      tray::stop_agents();
+      std::error_code ignored;
+      std::filesystem::remove(status_path, ignored);
+    }
     advertiser.stop();
     server->stop();
     usbip_server.stop();
@@ -505,7 +567,11 @@ namespace {
 
 int main(int argc, char **argv) {
   if (argc >= 2 && std::strcmp(argv[1], "notify") == 0) {
-    return desktop::run_notifier();  // started by show_pairing_code()
+    return desktop::run_notifier();  // started by show_notification()
+  }
+  if (argc >= 2 && std::strcmp(argv[1], "tray") == 0) {
+    // The icon, started by the service (or the Start menu shortcut, with --show).
+    return tray::run_tray(argc >= 3 && std::strcmp(argv[2], "--show") == 0);
   }
   Arguments args;
   if (!parse_arguments(argc, argv, args)) {

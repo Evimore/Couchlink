@@ -59,11 +59,11 @@ jobs:
       - name: Build
         run: |
           cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_COMPILER=clang++ -DINPUTLINE_FUZZ=ON -DINPUTLINE_BUILD_TESTS=OFF
-          cmake --build build -j --target fuzz_link_protocol fuzz_link_server fuzz_usbip_server
+          cmake --build build -j --target fuzz_link_protocol fuzz_link_server fuzz_usbip_server fuzz_update_check
       - name: Fuzz
         run: |
           mkdir -p crashes
-          for target in fuzz_link_protocol fuzz_link_server fuzz_usbip_server; do
+          for target in fuzz_link_protocol fuzz_link_server fuzz_usbip_server fuzz_update_check; do
             echo "::group::$target"
             mkdir -p "corpus/$target"
             build/fuzz/$target "corpus/$target" -max_total_time=60 -artifact_prefix=crashes/$target- -print_final_stats=1
@@ -162,6 +162,9 @@ jobs:
           $failure = (sc.exe qfailure InputLine) -join "`n"
           Check ($failure -match 'RESTART') 'the service restarts after a failure'
           Check (Test-Path "$env:ProgramFiles\InputLine\inputline-host.exe") 'inputline-host.exe is in Program Files'
+          $status = Join-Path $data 'status.txt'
+          Check ((Test-Path $status) -and (Select-String -Path $status -Pattern '^time=[0-9]+' -Quiet)) 'the service writes its status for the tray icon'
+          Check (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\InputLine.lnk") 'the Start menu has InputLine'
 
           $code = Invoke-Msi @('/fa', 'InputLine-Setup-old.msi', '/qn', '/l*v', 'msi-repair.log')
           Check ($code -eq 0) "repairs (exit $code)"
@@ -181,6 +184,8 @@ jobs:
           Check ($null -eq (Get-Service InputLine -ErrorAction SilentlyContinue)) 'the service is gone'
           Check ($null -eq (Get-NetFirewallRule -DisplayName 'InputLine (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule is gone'
           Check (-not (Test-Path "$env:ProgramFiles\InputLine\inputline-host.exe")) 'the program is gone'
+          Check (-not (Test-Path (Join-Path $data 'status.txt'))) 'the stopped service leaves no status behind'
+          Check (-not (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\InputLine.lnk")) 'the Start menu entry is gone'
           Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'pairings are kept for a later install'
       - name: Installer logs
         if: failure()

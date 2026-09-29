@@ -23,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace inputline {
 
@@ -73,6 +74,7 @@ namespace inputline {
       std::uint64_t outputs_sent = 0;
       std::uint64_t rejected_datagrams = 0;
       std::uint64_t reports_recovered = 0;  ///< lost reports rebuilt from the next datagram
+      std::vector<std::string> clients;  ///< names of the connected clients
     };
 
     LinkServer(Options options, ClientStore &store, ControllerBackend &backend);
