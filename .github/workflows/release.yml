@@ -97,6 +97,7 @@ jobs:
           xcodebuild -project InputLine.xcodeproj -target InputLine
           -sdk iphoneos -configuration Release SYMROOT="$RUNNER_TEMP/out"
           MARKETING_VERSION=${{ needs.check.outputs.app-version }} CURRENT_PROJECT_VERSION=${{ github.run_number }}
+          INPUTLINE_VERSION=${{ needs.check.outputs.version }}
           CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
           build | tail -n 60
       # Unsigned: a sideloading tool (Sideloadly, AltStore) signs it with your Apple ID.

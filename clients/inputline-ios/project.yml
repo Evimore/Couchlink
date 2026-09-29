@@ -8,6 +8,8 @@ options:
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
+    # The full version, pre-release included ("0.3.0-beta.1"); releases set it.
+    INPUTLINE_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     CLANG_CXX_LANGUAGE_STANDARD: gnu++17
     CLANG_ENABLE_OBJC_ARC: YES
@@ -37,6 +39,7 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: InputLine
+        InputLineVersion: $(INPUTLINE_VERSION)
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiresFullScreen: false

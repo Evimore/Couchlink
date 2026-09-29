@@ -5,6 +5,7 @@
 #include "inputline/link_protocol.h"
 #include "inputline/sha256.h"
 #include "inputline/timing_stats.h"
+#include "inputline/version.h"
 
 #include <cmath>
 #include <cstdio>
@@ -550,6 +551,25 @@ namespace {
     guard.reset();
     CHECK(guard.accept(1));
   }
+  void test_versions() {
+    CHECK(compare_versions("0.2.0", "0.2.0") == 0);
+    CHECK(compare_versions("v0.2.0", "0.2.0") == 0);
+    CHECK(compare_versions("0.2.0", "0.10.0") < 0);
+    CHECK(compare_versions("1.0.0", "0.99.99") > 0);
+    CHECK(compare_versions("0.2", "0.2.0") == 0);
+    CHECK(compare_versions("0.2.0-beta.2", "0.2.0") < 0);
+    CHECK(compare_versions("0.2.0", "0.2.0-beta.2") > 0);
+    CHECK(compare_versions("0.2.0-beta.2", "0.2.0-beta.10") < 0);
+    CHECK(compare_versions("0.2.0-beta.1", "0.2.0-beta") > 0);
+    CHECK(compare_versions("0.2.0-alpha", "0.2.0-beta") < 0);
+    CHECK(compare_versions("0.2.0-1", "0.2.0-alpha") < 0);
+    CHECK(compare_versions("0.2.0+abc", "0.2.0+def") == 0);
+    CHECK(compare_versions("0.3.0-beta.1", "0.2.9") > 0);
+    CHECK(is_version("v0.2.0-beta.1") && is_version("1") && !is_version("") && !is_version("abc") && !is_version("1..2") && !is_version("1.2-"));
+    CHECK(is_prerelease("0.2.0-beta.1") && !is_prerelease("0.2.0") && !is_prerelease("x-1"));
+    CHECK(compare_versions("99999999999999999999999", "1") > 0);  // saturates, no overflow
+  }
+
 }  // namespace
 
 int main() {
@@ -570,6 +590,7 @@ int main() {
   test_link_unauthenticated_types();
   test_link_messages_roundtrip();
   test_link_keys_and_replay();
+  test_versions();
 
   std::printf("%d/%d checks passed\n", g_checks - g_failures, g_checks);
   return g_failures == 0 ? 0 : 1;

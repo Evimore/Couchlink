@@ -20,6 +20,7 @@
 - [x] Releases from GitHub's website: Actions → Release → Run workflow
 - [x] Protocol version 2: X25519 pairing, ChaCha20-Poly1305 encryption, version negotiation with frozen wire-format tests
 - [x] Disconnect / Connect in the app: hand the controller back to the iPad; it goes back to the PC when switched off and on
+- [x] App: while connected, the PC section shows "Connected to <PC>" and a Disconnect button
 - [x] Windows installer (MSI): `inputline-host` runs as a service that starts with Windows, with the firewall rule; CI installs and uninstalls it
 
 ## Phases
@@ -40,7 +41,6 @@
 - [ ] Settle whether Steam uses the IMU quaternion in report `0x42`. If it does, compute orientation host-side from gyro and accel instead of sending identity.
 - [ ] Haptics end to end: trackpad clicks and rumble felt on the controller
 - [ ] Measure input latency against Steam Link (240 fps camera, same TV)
-- [ ] App: while connected, the PC's Connect button becomes Disconnect, and the address field is replaced by "Connected to <PC name>"
 
 ## Later
 

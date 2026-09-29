@@ -12,6 +12,7 @@
 
 #include "inputline/link_client.h"
 #include "inputline/timing_stats.h"
+#include "inputline/version.h"
 
 #include <arpa/inet.h>
 #include <cerrno>
@@ -53,6 +54,7 @@ namespace {
     // "-v2": pairings from before the safer pairing exchange are not used.
     NSString *const kKeychainAccount = @"pairings-v2";
     NSString *const kAddressDefaultsKey = @"ILNPCAddress";
+    NSString *const kDisconnectedDefaultsKey = @"ILNDisconnectedFromPC";  // the user tapped Disconnect
     // Every address a PC answered on (home network, VPN...), newest first, by
     // host name; and the host last connected to. When the saved address stops
     // answering, the others are tried in turn.
@@ -211,6 +213,7 @@ namespace {
     link::Key _hostPairingKey;  // the PC's temporary key, from its ProbeReply
     BOOL _codeRequested;
     NSString *_versionProblem;  // set when the PC and this app can't talk: which one to update
+    NSString *_updateNote;  // they can talk, but run different versions
     BOOL _paused;  // the user tapped Disconnect
     CFAbsoluteTime _linkDownSince;  // 0 while connected
     NSString *_appVersion;
@@ -257,12 +260,15 @@ namespace {
         _eventTime.dateFormat = @"HH:mm:ss.SSS";
         NSString *deviceName = [UIDevice currentDevice].name;  // shared is first used on the main thread
         _clientName = deviceName.length > 0 ? deviceName : @"InputLine";
-        _appVersion = [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"] ?: @"";
+        NSDictionary *info = [NSBundle mainBundle].infoDictionary;
+        _appVersion = info[@"InputLineVersion"] ?: info[@"CFBundleShortVersionString"] ?: @"";
         _queue = dispatch_queue_create("com.evimore.inputline.link", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
         _address = [[NSUserDefaults standardUserDefaults] stringForKey:kAddressDefaultsKey];
         _savedAddress = _address;
-        _state = _address.length > 0 ? ILNLinkStateSearching : ILNLinkStateNoPC;
+        _state = _address.length == 0 ? ILNLinkStateNoPC
+               : [[NSUserDefaults standardUserDefaults] boolForKey:kDisconnectedDefaultsKey] ? ILNLinkStateDisconnected
+                                                                                            : ILNLinkStateSearching;
         _inBackground = [UIApplication sharedApplication].applicationState == UIApplicationStateBackground;
 
         NSNotificationCenter *center = [NSNotificationCenter defaultCenter];
@@ -281,7 +287,7 @@ namespace {
         }
         [self logEvent:launchedInBackground ? @"InputLine started in the background (iOS launched it for a controller)"
                                             : @"InputLine started"];
-        if (self->_address.length > 0) {
+        if (self->_address.length > 0 && self->_state != ILNLinkStateDisconnected) {
             [self openSocket];
             [self enterState:ILNLinkStateSearching];
         }
@@ -314,6 +320,7 @@ namespace {
 {
     NSString *trimmed = [address stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
     [[NSUserDefaults standardUserDefaults] setObject:trimmed forKey:kAddressDefaultsKey];
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:kDisconnectedDefaultsKey];
     dispatch_async(_queue, ^{
         if (self->_state == ILNLinkStateConnected && self->_session) {
             [self detachAll];
@@ -321,6 +328,7 @@ namespace {
         }
         self->_address = trimmed;
         self->_versionProblem = nil;
+        self->_updateNote = nil;
         self->_savedAddress = trimmed;
         self->_candidateIndex = 0;
         self->_hostName = nil;
@@ -333,6 +341,25 @@ namespace {
         }
         [self openSocket];
         [self enterState:ILNLinkStateSearching];
+    });
+}
+
+- (void)disconnectFromPC
+{
+    [[NSUserDefaults standardUserDefaults] setBool:YES forKey:kDisconnectedDefaultsKey];
+    dispatch_async(_queue, ^{
+        if (self->_state == ILNLinkStateDisconnected || self->_address.length == 0) {
+            return;
+        }
+        if (self->_state == ILNLinkStateConnected && self->_session) {
+            [self detachAll];
+            [self sendDatagram:self->_session->make_bye()];
+        }
+        self->_session.reset();
+        self->_pendingPairRequest.clear();
+        [self closeSocket];
+        [self enterState:ILNLinkStateDisconnected];
+        [self logEvent:@"Disconnected from the PC: the controller works with this device until you tap Connect"];
     });
 }
 
@@ -489,9 +516,11 @@ namespace {
         status.paused = self->_paused;
         status.rttMs = self->_state == ILNLinkStateConnected ? self->_rttMs : -1;
         status.linkText = [self linkText];
+        status.linkUp = self->_state == ILNLinkStateConnected || (self->_state == ILNLinkStateConnecting && self->_everConnected);
+        status.updateText = self->_updateNote ?: @"";
         NSMutableArray<NSString *> *controllers = [NSMutableArray array];
         for (ILNController *controller in self->_controllers.allValues) {
-            NSString *state = self->_paused ? @"Disconnected from PC"
+            NSString *state = self->_paused || self->_state == ILNLinkStateDisconnected ? @"Disconnected from PC"
                             : self->_state != ILNLinkStateConnected ? @"Waiting for PC"
                             : controller.attached ? @"Connected to PC"
                             : @"Connecting to PC...";
@@ -529,6 +558,8 @@ namespace {
             return _rttMs >= 0 ? [NSString stringWithFormat:@"Connected to %@%@ (round trip %.1f ms)", _hostName, path, _rttMs]
                                : [NSString stringWithFormat:@"Connected to %@%@", _hostName, path];
         }
+        case ILNLinkStateDisconnected:
+            return [NSString stringWithFormat:@"Disconnected from %@. Tap Connect to connect again.", _hostName ?: _address];
     }
     return @"";
 }
@@ -734,7 +765,7 @@ namespace {
 - (void)enterState:(ILNLinkState)state
 {
     if (state != _state) {
-        static NSString *const names[] = {@"no PC", @"searching", @"not found", @"pairing", @"connecting", @"connected"};
+        static NSString *const names[] = {@"no PC", @"searching", @"not found", @"pairing", @"connecting", @"connected", @"disconnected"};
         [self logEvent:[NSString stringWithFormat:@"Link: %@", names[state]]];
     }
     if (state == ILNLinkStateConnected) {
@@ -779,6 +810,7 @@ namespace {
 
     switch (_state) {
         case ILNLinkStateNoPC:
+        case ILNLinkStateDisconnected:
             break;
 
         case ILNLinkStateSearching:
@@ -848,7 +880,8 @@ namespace {
     // While the controller goes to the PC, keep it out of its built-in
     // keyboard/mouse mode (it would also move this device's pointer). Otherwise
     // hand that mode back.
-    const BOOL toPC = !_paused && (_state == ILNLinkStateConnected || (_linkDownSince > 0 && now - _linkDownSince < kMouseModeAfterLinkDown));
+    const BOOL toPC = !_paused && _state != ILNLinkStateDisconnected &&
+                      (_state == ILNLinkStateConnected || (_linkDownSince > 0 && now - _linkDownSince < kMouseModeAfterLinkDown));
     for (ILNController *controller in _controllers.allValues) {
         if (toPC) {
             if (controller.mouseModeOn || now - controller.lastLizardSent >= kLizardInterval) {
@@ -905,6 +938,7 @@ namespace {
                 return;
             }
             _versionProblem = nil;
+            [self noteVersionOfPC:reply->software_version];
             link::Pairing pairing;
             if ([ILNBridge pairingForHostName:_hostName into:pairing]) {
                 [self startSessionWithPairing:pairing];
@@ -958,8 +992,31 @@ namespace {
         }
 
         case ILNLinkStateNoPC:
+        case ILNLinkStateDisconnected:
             return;
     }
+}
+
+/// The PC and this app can talk; if one runs an older version, say which to
+/// update. Link queue.
+- (void)noteVersionOfPC:(const std::string &)hostVersion
+{
+    const std::string appVersion = ToStdString(_appVersion);
+    NSString *note = nil;
+    if (inputline::is_version(hostVersion) && inputline::is_version(appVersion)) {
+        const int order = inputline::compare_versions(hostVersion, appVersion);
+        if (order < 0) {
+            note = [NSString stringWithFormat:@"%@ runs InputLine %@, older than this app (%@). Install the latest InputLine on the PC when you can.",
+                                              _hostName, ToNSString(hostVersion), _appVersion];
+        } else if (order > 0) {
+            note = [NSString stringWithFormat:@"%@ runs InputLine %@, newer than this app (%@). Update this app when you can.",
+                                              _hostName, ToNSString(hostVersion), _appVersion];
+        }
+    }
+    if (note != nil && ![note isEqualToString:_updateNote]) {
+        [self logEvent:note];
+    }
+    _updateNote = note;
 }
 
 - (void)startSessionWithPairing:(const link::Pairing &)pairing

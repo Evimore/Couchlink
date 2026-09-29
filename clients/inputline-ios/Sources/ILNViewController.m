@@ -15,6 +15,8 @@
 
 @implementation ILNViewController {
     UITextField *_addressField;
+    UIButton *_connectButton;
+    UILabel *_updateLabel;
     UIStackView *_discoveredStack;
     NSString *_discoveredShown;  // what _discoveredStack shows, to rebuild only on change
     NSArray<NSString *> *_discoveredAddresses;  // by button tag
@@ -116,7 +118,8 @@
     _addressField.delegate = self;
     _addressField.text = [ILNBridge shared].status.pcAddress;
     [stack addArrangedSubview:_addressField];
-    [stack addArrangedSubview:[self buttonWithTitle:@"Connect" action:@selector(connect)]];
+    _connectButton = [self buttonWithTitle:@"Connect" action:@selector(connectOrDisconnect)];
+    [stack addArrangedSubview:_connectButton];
     _discoveredStack = [[UIStackView alloc] init];
     _discoveredStack.axis = UILayoutConstraintAxisVertical;
     _discoveredStack.alignment = UIStackViewAlignmentLeading;
@@ -125,6 +128,9 @@
     [stack addArrangedSubview:_discoveredStack];
     _linkLabel = [self labelWithStyle:UIFontTextStyleBody color:[UIColor labelColor]];
     [stack addArrangedSubview:_linkLabel];
+    _updateLabel = [self labelWithStyle:UIFontTextStyleFootnote color:[UIColor systemOrangeColor]];
+    _updateLabel.hidden = YES;
+    [stack addArrangedSubview:_updateLabel];
     [stack addArrangedSubview:[self note:@"The PC needs InputLine installed (see the Releases page). At home, InputLine finds it on the network by itself. Away from home, enter its address on your VPN (for example Tailscale)."]];
     [stack setCustomSpacing:24 afterView:stack.arrangedSubviews.lastObject];
 
@@ -201,8 +207,13 @@
 {
     ILNStatus *status = [ILNBridge shared].status;
     _linkLabel.text = status.linkText;
+    _updateLabel.text = status.updateText;
+    _updateLabel.hidden = status.updateText.length == 0;
+    // While connected, the address gives way to "Connected to ..." and Connect becomes Disconnect.
+    _addressField.hidden = status.linkUp;
+    [_connectButton setTitle:status.linkUp ? @"Disconnect" : @"Connect" forState:UIControlStateNormal];
     [_pauseButton setTitle:status.paused ? @"Connect to PC" : @"Disconnect from PC" forState:UIControlStateNormal];
-    _pauseButton.hidden = status.controllers.count == 0;
+    _pauseButton.hidden = status.controllers.count == 0 || status.linkState == ILNLinkStateDisconnected;
     _pauseNote.hidden = _pauseButton.hidden;
     [self showDiscoveredPCs:status];
     _controllersLabel.text = status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"\n"]
@@ -264,6 +275,16 @@
         return;
     }
     _addressField.text = _discoveredAddresses[(NSUInteger)sender.tag];
+    [self connect];
+}
+
+- (void)connectOrDisconnect
+{
+    if ([ILNBridge shared].status.linkUp) {
+        [[ILNBridge shared] disconnectFromPC];
+        [self refresh];
+        return;
+    }
     [self connect];
 }
 

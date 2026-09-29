@@ -7,6 +7,7 @@ add_library(inputline_core STATIC
   src/sha256.cpp
   src/test_pattern.cpp
   src/timing_stats.cpp
+  src/version.cpp
 )
 target_include_directories(inputline_core PUBLIC include)
 target_compile_options(inputline_core PRIVATE ${INPUTLINE_WARNINGS})

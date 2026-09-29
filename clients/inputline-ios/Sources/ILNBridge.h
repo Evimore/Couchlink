@@ -20,6 +20,7 @@ typedef NS_ENUM(NSInteger, ILNLinkState) {
     ILNLinkStatePairing,     // waiting for the code shown on the PC
     ILNLinkStateConnecting,  // paired; starting a session
     ILNLinkStateConnected,
+    ILNLinkStateDisconnected,  // the user tapped Disconnect in the PC section
 };
 
 /// A snapshot for the UI; safe to read on the main thread.
@@ -28,6 +29,10 @@ typedef NS_ENUM(NSInteger, ILNLinkState) {
 @property (nonatomic, copy) NSString *pcAddress;
 @property (nonatomic, copy) NSString *pcName;
 @property (nonatomic, copy) NSString *linkText;
+/// Connected, or briefly reconnecting after a drop: the PC section shows Disconnect.
+@property (nonatomic) BOOL linkUp;
+/// The PC and this app run different versions: which one to update. Empty otherwise.
+@property (nonatomic, copy) NSString *updateText;
 @property (nonatomic, copy) NSArray<NSString *> *controllers;
 @property (nonatomic) double rttMs;               // -1 if unknown
 /// The user tapped Disconnect: controllers work with this device, not the PC.
@@ -63,6 +68,11 @@ typedef NS_ENUM(NSInteger, ILNLinkState) {
 
 /// Save a PC address ("192.168.1.20", "gaming-pc.local", "100.64.1.2", "[fe80::1]:48150") and connect.
 - (void)connectToPC:(NSString *)address;
+
+/// The PC section's Disconnect: end the link, unplug the controllers on the
+/// PC and give them back to this device. It stays disconnected, also after
+/// InputLine restarts, until connectToPC: is called.
+- (void)disconnectFromPC;
 
 /// Disconnect: unplug the controllers on the PC and give them back to this
 /// device (its pointer works again). Connect, or switching a controller off
