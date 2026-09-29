@@ -197,6 +197,15 @@ namespace {
     CHECK(!adopt_firmware_attributes(identity, {}));
   }
 
+  void test_lasting_settings() {
+    CHECK(is_lasting_setting({1, kCmdSetSettingsValues, 3, 9, 0, 0}));
+    CHECK(is_lasting_setting({1, kCmdClearDigitalMappings}));
+    CHECK(!is_lasting_setting({1, kCmdTurnOffController}));
+    CHECK(!is_lasting_setting({1, kCmdTriggerHapticPulse, 0}));
+    CHECK(!is_lasting_setting({1, kCmdCalibrateGyro}));
+    CHECK(!is_lasting_setting({1}));
+  }
+
   void test_without_settings() {
     // 0x87 with settings 48 (IMU) and 49 (wireless packet version).
     const std::vector<std::uint8_t> report {0x01, 0x87, 0x06, 48, 0x18, 0x00, 49, 0x02, 0x00};
@@ -594,6 +603,7 @@ int main() {
   test_feature_policy();
   test_adopt_firmware_attributes();
   test_timing_stats();
+  test_lasting_settings();
   test_without_settings();
   test_sha256_vectors();
   test_hmac_vectors();

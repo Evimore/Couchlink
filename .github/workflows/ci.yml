@@ -249,6 +249,51 @@ jobs:
           name: InputLine-iOS.ipa
           path: InputLine-iOS.ipa
           if-no-files-found: error
+      # Screenshots of the app's states (made up, no Bluetooth or PC), to
+      # review the design without installing it.
+      - name: Build for the simulator
+        working-directory: clients/inputline-ios
+        run: >
+          set -o pipefail &&
+          xcodebuild -project InputLine.xcodeproj -target InputLine
+          -sdk iphonesimulator -arch arm64 -configuration Debug SYMROOT="$RUNNER_TEMP/sim"
+          build | tail -n 20
+      - name: Take screenshots
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/sim/Debug-iphonesimulator/InputLine.app"
+          mkdir -p screenshots
+          pick() {
+            xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          prefix = sys.argv[1]
+          devices = [d for runtime, ds in json.load(sys.stdin)["devices"].items() if "iOS" in runtime for d in ds if d["name"].startswith(prefix)]
+          print(sorted(devices, key=lambda d: d["name"])[0]["udid"])' "$1"
+          }
+          for kind in "iPad Air" "iPhone"; do
+            udid=$(pick "$kind")
+            name=$(echo "$kind" | tr -d ' ')
+            xcrun simctl boot "$udid"
+            xcrun simctl bootstatus "$udid" -b > /dev/null
+            xcrun simctl status_bar "$udid" override --time 9:41 --batteryState charged --batteryLevel 100 || true
+            xcrun simctl install "$udid" "$app"
+            for appearance in light dark; do
+              xcrun simctl ui "$udid" appearance "$appearance"
+              for state in setup searching notfound connected disconnected; do
+                xcrun simctl launch --terminate-running-process "$udid" com.evimore.InputLine -ILNScreenshot "$state" > /dev/null
+                sleep 4
+                xcrun simctl io "$udid" screenshot "screenshots/$name-$appearance-$state.png" > /dev/null
+              done
+            done
+            xcrun simctl shutdown "$udid"
+          done
+          ls screenshots
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: InputLine-screenshots
+          path: screenshots
+          if-no-files-found: error
 
   usbip-end-to-end:
     name: End to end (Linux vhci-hcd + SDL)

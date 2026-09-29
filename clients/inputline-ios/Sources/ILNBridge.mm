@@ -156,6 +156,9 @@ namespace {
 @implementation ILNStatus
 @end
 
+@implementation ILNControllerInfo
+@end
+
 #pragma mark - Per-controller state
 
 @interface ILNController : NSObject
@@ -519,15 +522,26 @@ namespace {
         status.linkText = [self linkText];
         status.linkUp = self->_state == ILNLinkStateConnected || (self->_state == ILNLinkStateConnecting && self->_everConnected);
         status.updateText = self->_updateNote ?: @"";
+        status.viaTailscale = self->_viaTailscale;
+        status.problemText = self->_state == ILNLinkStateNotFound ? [self linkText] : @"";
         NSMutableArray<NSString *> *controllers = [NSMutableArray array];
+        NSMutableArray<ILNControllerInfo *> *infos = [NSMutableArray array];
         for (ILNController *controller in self->_controllers.allValues) {
-            NSString *state = self->_paused || self->_state == ILNLinkStateDisconnected ? @"Disconnected from PC"
-                            : self->_state != ILNLinkStateConnected ? @"Waiting for PC"
-                            : controller.attached ? @"Connected to PC"
+            ILNControllerInfo *info = [[ILNControllerInfo alloc] init];
+            info.name = controller.device.name ?: @"Steam Controller";
+            info.state = self->_paused || self->_state == ILNLinkStateDisconnected ? ILNControllerStateOnThisDevice
+                       : self->_state != ILNLinkStateConnected ? ILNControllerStateWaitingForPC
+                       : controller.attached ? ILNControllerStateOnPC
+                       : ILNControllerStateConnecting;
+            [infos addObject:info];
+            NSString *state = info.state == ILNControllerStateOnThisDevice ? @"Disconnected from PC"
+                            : info.state == ILNControllerStateWaitingForPC ? @"Waiting for PC"
+                            : info.state == ILNControllerStateOnPC ? @"Connected to PC"
                             : @"Connecting to PC...";
-            [controllers addObject:[NSString stringWithFormat:@"%@: %@", controller.device.name, state]];
+            [controllers addObject:[NSString stringWithFormat:@"%@: %@", info.name, state]];
         }
         status.controllers = controllers;
+        status.controllerInfo = infos;
         status.timingNow = self->_liveSummary;
         status.timingForeground = ToNSString(self->_timingForeground.summary().reports > 1 ? self->_timingForeground.summary().to_string() : "");
         status.timingBackground = ToNSString(self->_timingBackground.summary().reports > 1 ? self->_timingBackground.summary().to_string() : "");
@@ -806,6 +820,13 @@ namespace {
     if (now - _lastService < kTickInterval * 0.5) {
         return;
     }
+    if (_lastService > 0 && now - _lastService > kResumeAfterSilence && _state == ILNLinkStateConnected) {
+        // iOS pauses InputLine in the background while no controller is on,
+        // and the PC has since ended the session: start a new one now.
+        [self logEvent:[NSString stringWithFormat:@"Awake again after %.0f s paused by iOS: reconnecting", now - _lastService]];
+        _lastService = now;
+        [self enterState:ILNLinkStateConnecting];
+    }
     _lastService = now;
     const CFAbsoluteTime inState = now - _stateEnteredAt;
 
@@ -1070,10 +1091,16 @@ namespace {
             }
             break;
 
-        case EventType::kPong:
+        case EventType::kPong: {
             _lastPong = CFAbsoluteTimeGetCurrent();
-            _rttMs = (double)(WallClockMicroseconds() - event.pong.client_time_us) / 1000.0;
+            // A ping sent just before iOS paused the app comes back much
+            // later; that's not the network's round trip.
+            const double rtt = (double)(WallClockMicroseconds() - event.pong.client_time_us) / 1000.0;
+            if (rtt >= 0 && rtt < kLinkLostAfter * 1000.0) {
+                _rttMs = rtt;
+            }
             break;
+        }
 
         case EventType::kHidOutput:
             for (ILNController *controller in _controllers.allValues) {
@@ -1269,6 +1296,11 @@ namespace {
 
 - (void)identify:(ILNController *)controller
 {
+    [self identify:controller attempt:1];
+}
+
+- (void)identify:(ILNController *)controller attempt:(int)attempt
+{
     // GET_STRING_ATTRIBUTE (0xAE) index 1: the unit serial, which Steam keys
     // settings by and the PC uses to recognise the controller after a drop.
     const std::uint8_t serialRequest[] = {0x01, 0xAE, 0x01, 0x01};
@@ -1278,6 +1310,17 @@ namespace {
         const std::uint8_t *bytes = (const std::uint8_t *)reply.bytes;
         if (reply.length > 4 && bytes[1] == 0xAE && bytes[3] == 0x01) {
             serial = [[NSString alloc] initWithBytes:bytes + 4 length:strnlen((const char *)bytes + 4, reply.length - 4) encoding:NSASCIIStringEncoding];
+        }
+        // A controller that just woke up may not answer yet: ask again, so
+        // the PC recognises it and gives it back its old virtual controller.
+        if (serial.length == 0 && attempt < 3 && weakController != nil) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), self->_queue, ^{
+                ILNController *strong = weakController;
+                if (strong != nil) {
+                    [self identify:strong attempt:attempt + 1];
+                }
+            });
+            return;
         }
         // GET_ATTRIBUTES_VALUES (0x83): the firmware version Steam compares against.
         const std::uint8_t attributesRequest[] = {0x01, 0x83, 0x00};

@@ -7,6 +7,7 @@
 #include "discovery.h"
 #include "link_server.h"
 #include "log.h"
+#include "inputline/feature_responder.h"
 #include "inputline/link_client.h"
 #include "inputline/test_pattern.h"
 
@@ -493,6 +494,13 @@ namespace {
       const auto first = client.expect(session, link::ClientSession::EventType::kHidOutput);
       const auto second = client.expect(session, link::ClientSession::EventType::kHidOutput);
       CHECK(first && second && first->output.kind == link::OutputKind::kSetFeature && second->output.report == first->output.report);
+
+      // Turning the controller off reaches it, but is not a setting to replay.
+      sink(link::OutputKind::kSetFeature, {1, kCmdTurnOffController});
+      for (int copy = 0; copy < 2; ++copy) {
+        const auto off = client.expect(session, link::ClientSession::EventType::kHidOutput);
+        CHECK(off && off->output.report[1] == kCmdTurnOffController);
+      }
     }
 
     client.send(session.make_ping(12345));
@@ -515,8 +523,12 @@ namespace {
     }
     client.send(session.make_attach(attach));
     CHECK(client.expect(session, link::ClientSession::EventType::kAttachAck).has_value());
-    const auto replayed = client.expect(session, link::ClientSession::EventType::kHidOutput);
-    CHECK(replayed && replayed->output.kind == link::OutputKind::kSetFeature && replayed->output.report[1] == 0x87);
+    int settings_replayed = 0;
+    while (const auto replayed = client.expect(session, link::ClientSession::EventType::kHidOutput, 300)) {
+      CHECK(replayed->output.kind == link::OutputKind::kSetFeature && replayed->output.report[1] == 0x87);
+      ++settings_replayed;
+    }
+    CHECK(settings_replayed == 2);  // sent twice, like every setting
     {
       std::lock_guard lock(f.backend.mutex);
       CHECK(f.backend.created == 1 && f.backend.destroyed == 0);
@@ -589,6 +601,8 @@ namespace {
     CHECK(client.expect(session, link::ClientSession::EventType::kHelloAck).has_value());
 
     link::Attach attach;
+    const std::string serial = "FXA0000000001";
+    std::copy(serial.begin(), serial.end(), attach.unit_serial.begin());
     client.send(session.make_attach(attach));
     CHECK(client.expect(session, link::ClientSession::EventType::kAttachAck).has_value());
 
@@ -615,7 +629,9 @@ namespace {
     std::this_thread::sleep_for(50ms);
     CHECK(f.backend.count_reports() == before);
 
-    // The relaunched app claims the same device.
+    // The relaunched app claims the same device, even when it could not
+    // read the controller's serial number this time.
+    attach.unit_serial.fill('\0');
     client.send(relaunched.make_attach(attach));
     CHECK(client.expect(relaunched, link::ClientSession::EventType::kAttachAck).has_value());
     {

@@ -15,6 +15,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, readonly) NSString *name;
 /// Ready for -[ILNBridge connectToPC:]: "192.168.1.20", or with ":port" if not the default.
 @property (nonatomic, copy, readonly) NSString *address;
+/// For screenshots of the app.
++ (instancetype)pcWithName:(NSString *)name address:(NSString *)address;
 @end
 
 @class ILNDiscovery;

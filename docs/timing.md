@@ -14,7 +14,7 @@ InputLine measures how evenly controller reports arrive at both ends of the link
 ## Measure it yourself
 
 1. On the PC, turn statistics on: add a line `--stats` to `C:\ProgramData\InputLine\options.txt` (as administrator), then run `Restart-Service InputLine` in **Terminal (Admin)**. The `stats:` lines go to `C:\ProgramData\InputLine\inputline-host.log`.
-2. In InputLine, tap **Reset timing**, then use the controller for about 2 minutes with InputLine in front: sticks, both trackpads, a bit of gyro. The **Foreground** line fills in.
+2. In InputLine, under **Diagnostics**, tap **Show timing and events** and **Reset timing**, then use the controller for about 2 minutes with InputLine in front: sticks, both trackpads, a bit of gyro. The **Foreground** line fills in.
 3. Switch to your streaming app and play for at least 10 minutes.
 4. Switch back to InputLine and tap **Share report**. Compare it with the `stats:` lines from the PC's log.
 

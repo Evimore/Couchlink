@@ -23,6 +23,18 @@ typedef NS_ENUM(NSInteger, ILNLinkState) {
     ILNLinkStateDisconnected,  // the user tapped Disconnect in the PC section
 };
 
+typedef NS_ENUM(NSInteger, ILNControllerState) {
+    ILNControllerStateOnPC,          // plugged in on the PC
+    ILNControllerStateConnecting,    // being plugged in
+    ILNControllerStateWaitingForPC,  // no link to the PC right now
+    ILNControllerStateOnThisDevice,  // Disconnect was tapped: works with this device
+};
+
+@interface ILNControllerInfo : NSObject
+@property (nonatomic, copy) NSString *name;
+@property (nonatomic) ILNControllerState state;
+@end
+
 /// A snapshot for the UI; safe to read on the main thread.
 @interface ILNStatus : NSObject
 @property (nonatomic) ILNLinkState linkState;
@@ -33,7 +45,12 @@ typedef NS_ENUM(NSInteger, ILNLinkState) {
 @property (nonatomic) BOOL linkUp;
 /// The PC and this app run different versions: which one to update. Empty otherwise.
 @property (nonatomic, copy) NSString *updateText;
-@property (nonatomic, copy) NSArray<NSString *> *controllers;
+@property (nonatomic, copy) NSArray<NSString *> *controllers;  // "name: state", for the report
+@property (nonatomic, copy) NSArray<ILNControllerInfo *> *controllerInfo;
+/// Talking to the PC through Tailscale.
+@property (nonatomic) BOOL viaTailscale;
+/// Why the PC can't be reached (no answer, version mismatch), when it can't. Empty otherwise.
+@property (nonatomic, copy) NSString *problemText;
 @property (nonatomic) double rttMs;               // -1 if unknown
 /// The user tapped Disconnect: controllers work with this device, not the PC.
 @property (nonatomic) BOOL paused;

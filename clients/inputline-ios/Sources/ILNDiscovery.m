@@ -20,6 +20,15 @@ static const NSTimeInterval kResolveTimeout = 5.0;
 @end
 
 @implementation ILNDiscoveredPC
+
++ (instancetype)pcWithName:(NSString *)name address:(NSString *)address
+{
+    ILNDiscoveredPC *pc = [[ILNDiscoveredPC alloc] init];
+    pc.name = name;
+    pc.address = address;
+    return pc;
+}
+
 @end
 
 /// The address to connect to, from a resolved service's socket addresses. Prefers IPv4.

@@ -13,7 +13,9 @@
 {
     // Also runs when iOS relaunches the app in the background to hand back a
     // controller (Bluetooth state restoration): start the bridge either way.
-    [[ILNBridge shared] start];
+    if ([[NSUserDefaults standardUserDefaults] stringForKey:ILNScreenshotKey] == nil) {
+        [[ILNBridge shared] start];
+    }
 
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.rootViewController = [[ILNViewController alloc] init];

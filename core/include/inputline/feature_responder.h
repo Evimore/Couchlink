@@ -93,6 +93,14 @@ namespace inputline {
    */
   std::vector<std::uint8_t> without_settings(const std::vector<std::uint8_t> &report, const std::set<std::uint8_t> &blocked);
 
+  /**
+   * @brief Whether a forwarded SET_FEATURE (report ID first) leaves state on
+   *        the controller that it loses when it reconnects: settings and
+   *        mappings. Worth sending again then; one-off actions (turning it
+   *        off, a haptic pulse, calibration) are not.
+   */
+  bool is_lasting_setting(const std::vector<std::uint8_t> &report);
+
   /** GET_ATTRIBUTES_VALUES record tags. */
   constexpr std::uint8_t kAttribFirmwareBuild = 0x04;
   constexpr std::uint8_t kAttribBootloaderBuild = 0x0A;

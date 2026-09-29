@@ -2,6 +2,7 @@
 
 #include "log.h"
 #include "inputline/cpace.h"
+#include "inputline/feature_responder.h"
 #include "inputline/link_client.h"
 #include "inputline/sha256.h"
 
@@ -497,13 +498,27 @@ namespace inputline {
           session.last_sequence.erase(number);  // a (re)attached controller numbers its reports afresh
           // The same physical controller coming back takes over its old
           // device, which never left Windows.
-          const auto parked = std::find_if(parked_.begin(), parked_.end(), [&](const Parked &p) {
-            return p.plugged.route->client_id == session.client.client_id && p.plugged.serial == serial;
+          const auto mine = [&](const Parked &p) {
+            return p.plugged.route->client_id == session.client.client_id;
+          };
+          auto parked = std::find_if(parked_.begin(), parked_.end(), [&](const Parked &p) {
+            return mine(p) && p.plugged.serial == serial;
           });
+          // A serial the app could not read: with only one controller of
+          // this app waiting, it's that one.
+          if (parked == parked_.end() && std::count_if(parked_.begin(), parked_.end(), mine) == 1) {
+            const auto only = std::find_if(parked_.begin(), parked_.end(), mine);
+            if (serial.empty() || only->plugged.serial.empty()) {
+              parked = only;
+            }
+          }
           if (parked != parked_.end()) {
             Plugged plugged = std::move(parked->plugged);
             parked_.erase(parked);
             plugged.route->controller = number;
+            if (!serial.empty()) {
+              plugged.serial = serial;
+            }
             replay = plugged.route->settings;
             session.controllers.emplace(number, std::move(plugged));
             log::info("link: '", session.client.name, "' controller ", int(number), " is back; it stayed plugged in");
@@ -519,7 +534,7 @@ namespace inputline {
             });
             if (device) {
               session.controllers.emplace(number, Plugged {std::move(device), route, instance, serial});
-              log::info("link: '", session.client.name, "' attached controller ", int(number));
+              log::info("link: '", session.client.name, "' attached controller ", int(number), serial.empty() ? " (its serial number is unknown)" : "");
             } else {
               ack.status = AttachStatus::kBackendUnavailable;
             }
@@ -679,7 +694,9 @@ namespace inputline {
     if (report.empty() || report.size() > kMaxReportSize) {
       return;
     }
-    if (kind == OutputKind::kSetFeature) {
+    // Only settings are replayed after a reconnect: never "turn off", or the
+    // controller would switch itself off each time it comes back.
+    if (kind == OutputKind::kSetFeature && is_lasting_setting(report)) {
       auto &settings = route->settings;
       settings.erase(std::remove(settings.begin(), settings.end(), report), settings.end());
       settings.push_back(report);
