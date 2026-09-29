@@ -31,7 +31,11 @@ namespace inputline {
   /** Run the attach command; blocks until it exits. Returns true on exit code 0. */
   bool run_usbip_attach(const AttachOptions &options, const std::string &busid);
 
-  /** Run a program with arguments (no shell) and return its exit code, or -1 if it could not start. */
-  int run_process(const std::vector<std::string> &argv);
+  /**
+   * @brief Run a program with arguments (no shell).
+   * @param output If given, receives what the program wrote to stdout and stderr.
+   * @return Its exit code, or -1 if it could not start.
+   */
+  int run_process(const std::vector<std::string> &argv, std::string *output = nullptr);
 
 }  // namespace inputline

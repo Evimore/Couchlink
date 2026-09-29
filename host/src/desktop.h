@@ -20,10 +20,19 @@ namespace inputline::desktop {
   /**
    * @brief Put a pairing code on the PC's screen without blocking the caller.
    *
-   * The user types it into the InputLine app on the iPad or iPhone. From the
-   * service, it goes to the signed-in user's screen.
+   * The user types it into the InputLine app on the iPad or iPhone. It shows as
+   * a Windows notification (from the service, on the signed-in user's screen),
+   * or in a message box if that fails.
    */
   void show_pairing_code(const std::string &client_name, const std::string &code);
+
+  /**
+   * @brief The hidden 'notify TITLE TEXT SECONDS' command: show a Windows
+   *        notification with the InputLine tray icon, and keep the icon for
+   *        SECONDS. show_pairing_code() starts it in the user's session.
+   * @return Process exit code.
+   */
+  int run_notifier();
 
   /** Detach from the console window (for the logon task). */
   void hide_console();

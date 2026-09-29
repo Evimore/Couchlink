@@ -5,6 +5,7 @@
 #include "log.h"
 #include "steam_controller_device.h"
 #include "triton_descriptors.h"
+#include "usbip_attach.h"
 #include "usbip_test_client.h"
 
 #include <chrono>
@@ -279,6 +280,21 @@ namespace {
     server.stop();  // idempotent
   }
 
+  /** usbip's messages reach the log only if run_process captures them. */
+  void test_run_process_captures_output() {
+#ifdef _WIN32
+    const std::vector<std::string> argv {"cmd.exe", "/c", "echo out& echo err 1>&2& exit 3"};
+#else
+    const std::vector<std::string> argv {"sh", "-c", "echo out; echo err >&2; exit 3"};
+#endif
+    std::string output;
+    CHECK(run_process(argv, &output) == 3);
+    CHECK(output.find("out") != std::string::npos);
+    CHECK(output.find("err") != std::string::npos);
+    CHECK(run_process(argv) == 3);  // without capture
+    CHECK(run_process({"inputline-no-such-program"}, &output) != 0);
+  }
+
 }  // namespace
 
 int main() {
@@ -287,5 +303,6 @@ int main() {
   test_descriptors_and_handshake();
   test_interrupt_transfers();
   test_server_restart_and_multiple_devices();
+  test_run_process_captures_output();
   return test::report_and_exit_code();
 }

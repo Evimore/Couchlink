@@ -9,6 +9,7 @@
 #else
   #include <spawn.h>
   #include <sys/wait.h>
+  #include <unistd.h>
 extern char **environ;
 #endif
 
@@ -57,19 +58,43 @@ namespace inputline {
       return true;
     }
 
+    auto run = [&busid](const std::vector<std::string> &argv) {
+      std::string command;
+      for (const auto &arg : argv) {
+        command += (command.empty() ? "" : " ") + arg;
+      }
+      log::debug("attach: running ", command);
+      std::string output;
+      const int code = run_process(argv, &output);
+      // usbip's own words are the best clue when attaching fails.
+      while (!output.empty() && (output.back() == '\n' || output.back() == '\r' || output.back() == ' ')) {
+        output.pop_back();
+      }
+      if (!output.empty()) {
+        if (code != 0) {
+          log::warn("attach: usbip said (exit ", code, "): ", output);
+        } else {
+          log::debug("attach: usbip said: ", output);
+        }
+      }
+      (void) busid;
+      return code;
+    };
+
     auto argv = attach_command(options, busid, options.use_low_latency_mode);
-    int code = run_process(argv);
+    int code = run(argv);
 #ifdef _WIN32
     if (code != 0 && options.use_low_latency_mode) {
       log::info("attach: retrying without newer usbip-win2 options");
       argv = attach_command(options, busid, false);
-      code = run_process(argv);
+      code = run(argv);
     }
 #endif
     if (code != 0) {
-      log::error("attach: '", argv[0], "' failed (exit ", code, "). Is usbip installed and are we running as administrator/root?");
+      log::error("attach: '", argv[0], "' failed (exit ", code, "). Is usbip-win2 installed, and does InputLine run as administrator/root?");
       return false;
     }
+    log::info("attach: plugged in ", busid);
     return true;
   }
 
@@ -111,7 +136,7 @@ namespace inputline {
     }
   }  // namespace
 
-  int run_process(const std::vector<std::string> &argv) {
+  int run_process(const std::vector<std::string> &argv, std::string *output) {
     if (argv.empty()) {
       return -1;
     }
@@ -123,12 +148,52 @@ namespace inputline {
       command_line += quote(widen(arg));
     }
 
+    // Collect stdout and stderr through one pipe; stdin reads nothing.
+    SECURITY_ATTRIBUTES inherit {};
+    inherit.nLength = sizeof(inherit);
+    inherit.bInheritHandle = TRUE;
+    HANDLE read_end = nullptr;
+    HANDLE write_end = nullptr;
+    HANDLE nul = INVALID_HANDLE_VALUE;
+    const bool capture = output != nullptr && CreatePipe(&read_end, &write_end, &inherit, 0);
+    if (capture) {
+      SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+      nul = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, nullptr);
+    }
+
     STARTUPINFOW startup {};
     startup.cb = sizeof(startup);
+    if (capture) {
+      startup.dwFlags = STARTF_USESTDHANDLES;
+      startup.hStdInput = nul;
+      startup.hStdOutput = write_end;
+      startup.hStdError = write_end;
+    }
     PROCESS_INFORMATION process {};
-    if (!CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
-      log::error("attach: cannot start ", argv[0], " (error ", GetLastError(), ")");
+    const BOOL started = CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, capture ? TRUE : FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+    const DWORD start_error = GetLastError();
+    if (capture) {
+      CloseHandle(write_end);  // our copy: reading ends when the child exits
+      if (nul != INVALID_HANDLE_VALUE) {
+        CloseHandle(nul);
+      }
+    }
+    if (!started) {
+      if (capture) {
+        CloseHandle(read_end);
+      }
+      log::error("attach: cannot start ", argv[0], " (error ", start_error, ")");
       return -1;
+    }
+    if (capture) {
+      char buffer[512];
+      DWORD got = 0;
+      while (ReadFile(read_end, buffer, sizeof(buffer), &got, nullptr) && got > 0) {
+        if (output->size() < 16384) {
+          output->append(buffer, got);
+        }
+      }
+      CloseHandle(read_end);
     }
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD exit_code = 1;
@@ -138,9 +203,19 @@ namespace inputline {
     return static_cast<int>(exit_code);
   }
 #else
-  int run_process(const std::vector<std::string> &argv) {
+  int run_process(const std::vector<std::string> &argv, std::string *output) {
     if (argv.empty()) {
       return -1;
+    }
+    int pipe_fds[2] = {-1, -1};
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    const bool capture = output != nullptr && ::pipe(pipe_fds) == 0;
+    if (capture) {
+      posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], 1);
+      posix_spawn_file_actions_adddup2(&actions, pipe_fds[1], 2);
+      posix_spawn_file_actions_addclose(&actions, pipe_fds[0]);
+      posix_spawn_file_actions_addclose(&actions, pipe_fds[1]);
     }
     std::vector<char *> raw;
     raw.reserve(argv.size() + 1);
@@ -150,9 +225,27 @@ namespace inputline {
     raw.push_back(nullptr);
 
     pid_t pid = 0;
-    if (posix_spawnp(&pid, raw[0], nullptr, nullptr, raw.data(), environ) != 0) {
+    const int spawned = posix_spawnp(&pid, raw[0], capture ? &actions : nullptr, nullptr, raw.data(), environ);
+    posix_spawn_file_actions_destroy(&actions);
+    if (capture) {
+      ::close(pipe_fds[1]);
+    }
+    if (spawned != 0) {
+      if (capture) {
+        ::close(pipe_fds[0]);
+      }
       log::error("attach: cannot start ", argv[0]);
       return -1;
+    }
+    if (capture) {
+      char buffer[512];
+      ssize_t got = 0;
+      while ((got = ::read(pipe_fds[0], buffer, sizeof(buffer))) > 0) {
+        if (output->size() < 16384) {
+          output->append(buffer, static_cast<std::size_t>(got));
+        }
+      }
+      ::close(pipe_fds[0]);
     }
     int status = 0;
     if (waitpid(pid, &status, 0) < 0 || !WIFEXITED(status)) {

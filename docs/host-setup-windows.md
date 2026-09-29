@@ -28,9 +28,9 @@ Its files are in `C:\ProgramData\InputLine`: the log (`inputline-host.log`), opt
 
 ## 3. Pair your iPad or iPhone
 
-Open InputLine on the iPad or iPhone and tap your PC under **Found on this network** (or enter its address and tap **Connect**). The first time, a small window pops up on the PC with a 6-digit code; type it into InputLine. From then on, the device connects by itself.
+Open InputLine on the iPad or iPhone and tap your PC under **Found on this network** (or enter its address and tap **Connect**). The first time, a Windows notification on the PC shows a 6-digit code; type it into InputLine. (Missed it? Click the InputLine icon in the taskbar's notification area to see it again.) From then on, the device connects by itself.
 
-Not at the PC? Open your streaming app first: the code window is on the PC's screen, so it shows in the stream. Then switch back to InputLine and enter it.
+Not at the PC? Open your streaming app first: the notification is on the PC's screen, so it shows in the stream. Then switch back to InputLine and enter it.
 
 ## Checking that Steam sees the controller
 
@@ -97,10 +97,10 @@ The log is `C:\ProgramData\InputLine\inputline-host.log` (the one from before th
 | Symptom | Try |
 |---|---|
 | The installer says it needs usbip-win2 | Install [usbip-win2](https://github.com/vadimgrn/usbip-win2/releases) first (step 1), then run the installer again. |
-| `attach: ... failed` in the log | Check that `C:\Program Files\USBip\usbip.exe` exists. If usbip-win2 lives elsewhere, add `--usbip-exe "C:\path\to\usbip.exe"` to `options.txt`. |
+| `attach: ... failed` in the log | The `attach: usbip said` line just before it gives usbip's reason. Check that `C:\Program Files\USBip\usbip.exe` exists. If usbip-win2 lives elsewhere, add `--usbip-exe "C:\path\to\usbip.exe"` to `options.txt`. |
 | InputLine doesn't list the PC | Set the network's profile to **Private** in Windows settings (*Network & internet → your network*): Windows doesn't answer network discovery on Public networks. You can always enter the address instead. |
 | InputLine says the PC does not answer | Check that the InputLine service is running (`Get-Service InputLine`) and that the PC's firewall allows it (the installer adds a rule named *InputLine (UDP 48150)*). |
-| No code window on the PC | A game in exclusive fullscreen can hide it. The code is also in the log (`pairing code for ...`). |
+| No pairing notification on the PC | Windows holds notifications back while you play or when *Do not disturb* is on; check the notification centre (Windows key + N). The code is also in the log (`pairing code for ...`). |
 | The controller appears but Steam ignores it | Add `--verbose` to `options.txt`, restart the service, and open an issue with the log. |
 | The controller disconnects after Steam sends it a setting | The log lists each setting Steam passed on (`Steam set setting N = V`). Setting 49 (wireless protocol version) is never passed on. To test another suspect, add `--block-setting N` to `options.txt`. |
 | Windows' USB sound plays when Steam changes a controller config | The physical controller dropped Bluetooth for a moment. The virtual controller stays plugged in for up to 2 minutes, so Steam doesn't notice. The log names each setting Steam passed to the controller just before `lost controller`; please report which one. |

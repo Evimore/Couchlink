@@ -2,6 +2,7 @@
 
 #include "log.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 
   #include <aclapi.h>
   #include <sddl.h>
+  #include <shellapi.h>
   #include <wtsapi32.h>
 #endif
 
@@ -69,19 +71,23 @@ namespace inputline::desktop {
       return out;
     }
 
-    /** One argument, quoted for the Windows command line if needed. */
+    /** One argument, quoted for the Windows command line if needed (CommandLineToArgvW rules). */
     std::string arg_quote(const std::string &arg) {
       if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos) {
         return arg;
       }
       std::string out = "\"";
+      std::size_t backslashes = 0;
       for (char c : arg) {
-        if (c == '"') {
-          out += "\\\"";
-        } else {
-          out.push_back(c);
+        if (c == '\\') {
+          ++backslashes;
+          continue;
         }
+        out.append(c == '"' ? backslashes * 2 + 1 : backslashes, '\\');
+        backslashes = 0;
+        out.push_back(c);
       }
+      out.append(backslashes * 2, '\\');
       out.push_back('"');
       return out;
     }
@@ -124,42 +130,203 @@ namespace inputline::desktop {
       "}\n";
   }  // namespace
 
+  namespace {
+    constexpr UINT kNotifyIconMessage = WM_APP + 1;
+    constexpr int kPairingSeconds = 120;  // how long a pairing code works
+
+    /** The printable part of a name a device sent us, kept short. */
+    std::string printable_name(const std::string &name) {
+      std::string out;
+      for (unsigned char c : name) {
+        if (c >= 0x20 && c != 0x7F) {
+          out.push_back(static_cast<char>(c));
+        }
+      }
+      if (out.size() > 60) {
+        out.resize(60);
+        while (!out.empty() && (static_cast<unsigned char>(out.back()) & 0xC0) == 0x80) {
+          out.pop_back();  // drop a cut-off UTF-8 sequence
+        }
+        if (!out.empty() && static_cast<unsigned char>(out.back()) >= 0xC0) {
+          out.pop_back();
+        }
+        out += "...";
+      }
+      return out.empty() ? "A device" : out;
+    }
+
+    /**
+     * Start 'inputline-host notify' in the signed-in user's session (from the
+     * service) or next to us, without waiting for it.
+     */
+    bool start_notifier(const std::string &title, const std::string &text) {
+      const std::string exe = executable_path();
+      std::wstring command_line = widen(
+        arg_quote(exe) + " notify " + arg_quote(title) + " " + arg_quote(text) + " " + std::to_string(kPairingSeconds)
+      );
+      std::wstring desktop = L"winsta0\\default";
+      STARTUPINFOW startup {};
+      startup.cb = sizeof(startup);
+      startup.lpDesktop = desktop.data();
+      PROCESS_INFORMATION process {};
+      BOOL started = FALSE;
+      if (g_service_mode) {
+        // A service has no desktop of its own: run the notifier as the user
+        // who is signed in at the PC, in their session.
+        const DWORD session = WTSGetActiveConsoleSessionId();
+        HANDLE token = nullptr;
+        if (session == 0xFFFFFFFF || !WTSQueryUserToken(session, &token)) {
+          log::debug("pairing: no signed-in user for a notification (error ", GetLastError(), ")");
+          return false;
+        }
+        started = CreateProcessAsUserW(token, nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+        CloseHandle(token);
+      } else {
+        started = CreateProcessW(nullptr, command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+      }
+      if (!started) {
+        log::debug("pairing: cannot start the notification (error ", GetLastError(), ")");
+        return false;
+      }
+      CloseHandle(process.hThread);
+      CloseHandle(process.hProcess);
+      return true;
+    }
+
+    /** Window of the notifier: the tray icon's messages and its timer. */
+    LRESULT CALLBACK notifier_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+      if (message == WM_TIMER) {
+        PostQuitMessage(0);
+        return 0;
+      }
+      if (message == kNotifyIconMessage) {
+        // Clicking the icon or the notification shows the code again.
+        const UINT event = LOWORD(lparam);
+        if (event == NIN_SELECT || event == NIN_KEYSELECT || event == NIN_BALLOONUSERCLICK) {
+          const auto *text = reinterpret_cast<const std::wstring *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+          MessageBoxW(window, text->c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+        }
+        return 0;
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
+    }
+  }  // namespace
+
   void show_pairing_code(const std::string &client_name, const std::string &code) {
     std::string spaced = code;
     if (spaced.size() == 6) {
       spaced.insert(3, " ");
     }
-    const std::wstring text = widen(
-      client_name + " wants to connect a Steam Controller to this PC with InputLine.\n\n"
-                    "Enter this code on it:\n\n"
-                    "        " +
+    const std::string name = printable_name(client_name);
+    // A Windows notification, like other background apps show. Windows
+    // limits its title to 63 characters and its text to 255.
+    const std::string title = "InputLine pairing code: " + spaced;
+    const std::string text = name + " wants to connect a Steam Controller to this PC. Enter the code in InputLine on it. "
+                                    "It works for 2 minutes. Didn't ask for this? Ignore it.";
+    if (start_notifier(title, text)) {
+      return;
+    }
+
+    // No notification: fall back to a message box.
+    const std::wstring box = widen(
+      name + " wants to connect a Steam Controller to this PC with InputLine.\n\n"
+             "Enter this code on it:\n\n"
+             "        " +
       spaced +
       "\n\n"
       "The code works for 2 minutes. If you did not ask for this, click OK and ignore it."
     );
     if (g_service_mode) {
-      // A service has no desktop of its own: ask Windows to show the message
-      // in the signed-in user's session, without waiting for OK.
+      // Ask Windows to show it in the signed-in user's session, without waiting for OK.
       const DWORD session = WTSGetActiveConsoleSessionId();
       if (session == 0xFFFFFFFF) {
         log::warn("pairing: nobody is signed in to this PC to see the code");
         return;
       }
-      std::wstring title = L"InputLine";
-      std::wstring message = text;
+      std::wstring title_w = L"InputLine";
+      std::wstring message = box;
       DWORD response = 0;
       if (!WTSSendMessageW(
-            WTS_CURRENT_SERVER_HANDLE, session, title.data(), static_cast<DWORD>(title.size() * sizeof(wchar_t)),
+            WTS_CURRENT_SERVER_HANDLE, session, title_w.data(), static_cast<DWORD>(title_w.size() * sizeof(wchar_t)),
             message.data(), static_cast<DWORD>(message.size() * sizeof(wchar_t)),
-            MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND, 120, &response, FALSE
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND, kPairingSeconds, &response, FALSE
           )) {
         log::warn("pairing: could not show the code on screen (error ", GetLastError(), ")");
       }
       return;
     }
-    std::thread([text] {
-      MessageBoxW(nullptr, text.c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
+    std::thread([box] {
+      MessageBoxW(nullptr, box.c_str(), L"InputLine", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
     }).detach();
+  }
+
+  int run_notifier() {
+    // inputline-host notify TITLE TEXT SECONDS, read as UTF-16 so names in
+    // any language survive.
+    int count = 0;
+    LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (argv == nullptr || count < 4) {
+      if (argv != nullptr) {
+        LocalFree(argv);
+      }
+      return 2;
+    }
+    const std::wstring title = argv[2];
+    std::wstring text = argv[3];
+    const int seconds = count > 4 ? std::max(5, std::min(600, _wtoi(argv[4]))) : kPairingSeconds;
+    LocalFree(argv);
+
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    WNDCLASSW window_class {};
+    window_class.lpfnWndProc = notifier_proc;
+    window_class.hInstance = instance;
+    window_class.lpszClassName = L"InputLineNotifier";
+    RegisterClassW(&window_class);
+    HWND window = CreateWindowExW(0, window_class.lpszClassName, L"InputLine", 0, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
+    if (window == nullptr) {
+      return 1;
+    }
+    SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&text));
+
+    NOTIFYICONDATAW icon {};
+    icon.cbSize = sizeof(icon);
+    icon.hWnd = window;
+    icon.uID = 1;
+    icon.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE | NIF_INFO | NIF_SHOWTIP;
+    icon.uCallbackMessage = kNotifyIconMessage;
+    const auto load_icon = [instance](int size_metric) {
+      const int size = GetSystemMetrics(size_metric);
+      return static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
+    };
+    icon.hIcon = load_icon(SM_CXSMICON);
+    icon.hBalloonIcon = load_icon(SM_CXICON);
+    wcsncpy_s(icon.szTip, title.c_str(), _TRUNCATE);
+    wcsncpy_s(icon.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(icon.szInfo, text.c_str(), _TRUNCATE);
+    icon.dwInfoFlags = icon.hBalloonIcon != nullptr ? NIIF_USER | NIIF_LARGE_ICON : NIIF_INFO;
+    if (!Shell_NotifyIconW(NIM_ADD, &icon)) {
+      DestroyWindow(window);
+      return 1;
+    }
+    icon.uVersion = NOTIFYICON_VERSION_4;
+    Shell_NotifyIconW(NIM_SETVERSION, &icon);
+
+    // Keep the icon (and so the notification in the notification centre)
+    // for as long as the code works.
+    SetTimer(window, 1, static_cast<UINT>(seconds) * 1000, nullptr);
+    MSG message;
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+    Shell_NotifyIconW(NIM_DELETE, &icon);
+    DestroyWindow(window);
+    for (HICON handle : {icon.hIcon, icon.hBalloonIcon}) {
+      if (handle != nullptr) {
+        DestroyIcon(handle);
+      }
+    }
+    return 0;
   }
 
   void hide_console() {
@@ -403,6 +570,10 @@ namespace inputline::desktop {
 #else
 
   void show_pairing_code(const std::string &, const std::string &) {}
+
+  int run_notifier() {
+    return 1;
+  }
 
   void hide_console() {}
 

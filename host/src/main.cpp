@@ -20,6 +20,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -503,6 +504,9 @@ namespace {
 }  // namespace
 
 int main(int argc, char **argv) {
+  if (argc >= 2 && std::strcmp(argv[1], "notify") == 0) {
+    return desktop::run_notifier();  // started by show_pairing_code()
+  }
   Arguments args;
   if (!parse_arguments(argc, argv, args)) {
     print_usage();
