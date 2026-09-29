@@ -1,0 +1,58 @@
+<!--
+  InputLine-Setup.exe: usbip-win2 (when it isn't installed yet), then InputLine.
+
+  usbip-win2 installs USB drivers; its own setup runs with its own window,
+  licence and warnings, and it stays installed if InputLine is removed. It is
+  the exact installer pinned in get-usbip-win2.ps1.
+
+  Build (WiX Toolset v5, see .github/workflows):
+    wix build installer/windows/Bundle.wxs -arch x64 -ext WixToolset.BootstrapperApplications.wixext -ext WixToolset.Util.wixext
+      -d Version=1.2.3 -d MsiPath=InputLine-Setup.msi -d UsbipInstaller=USBip-0.9.8.1-x64.exe
+      -d RootDir=. -d RepoUrl=https://github.com/OWNER/REPO -o InputLine-Setup.exe
+
+  Unattended (CI): InputLine-Setup.exe /quiet UsbipArgs="/VERYSILENT /SUPPRESSMSGBOXES"
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <!-- Never change the UpgradeCode: it is how new versions find and replace old ones. -->
+  <Bundle Name="InputLine"
+          Manufacturer="InputLine"
+          Version="$(var.Version)"
+          UpgradeCode="A1E42214-EFC2-416C-9B1C-D7318483F8AB"
+          IconSourceFile="$(var.RootDir)\installer\windows\inputline.ico"
+          AboutUrl="$(var.RepoUrl)"
+          HelpUrl="$(var.RepoUrl)/blob/main/docs/host-setup-windows.md">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication LicenseUrl="$(var.RepoUrl)/blob/main/LICENSE"
+                                              Theme="hyperlinkLicense"
+                                              ShowVersion="yes" />
+    </BootstrapperApplication>
+
+    <!-- Extra arguments for usbip-win2's setup; its window shows unless told otherwise. -->
+    <Variable Name="UsbipArgs" Value="/SP-" Overridable="yes" />
+
+    <util:FileSearch Id="UsbipExe"
+                     Path="[ProgramFiles64Folder]USBip\usbip.exe"
+                     Result="exists"
+                     Variable="UsbipInstalled" />
+
+    <Chain>
+      <ExePackage Id="UsbipWin2"
+                  DisplayName="usbip-win2"
+                  Description="USB/IP client for Windows, which plugs the virtual Steam Controller into Windows"
+                  SourceFile="$(var.UsbipInstaller)"
+                  PerMachine="yes"
+                  Permanent="yes"
+                  Vital="yes"
+                  DetectCondition="UsbipInstalled"
+                  InstallArguments="[UsbipArgs] /NORESTART /RESTARTEXITCODE=3010">
+        <!-- usbip-win2 always asks for a restart after installing its drivers. -->
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+      </ExePackage>
+      <MsiPackage Id="InputLine" SourceFile="$(var.MsiPath)" />
+    </Chain>
+  </Bundle>
+</Wix>

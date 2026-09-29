@@ -106,7 +106,7 @@ jobs:
       - name: Install WiX
         run: |
           dotnet tool install --global wix --version 5.0.2
-          wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2 WixToolset.BootstrapperApplications.wixext/5.0.2
       # Two versions of the same build, to test upgrading from one to the other.
       - name: Build the installer
         run: |
@@ -187,10 +187,50 @@ jobs:
           Check (-not (Test-Path (Join-Path $data 'status.txt'))) 'the stopped service leaves no status behind'
           Check (-not (Test-Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\InputLine.lnk")) 'the Start menu entry is gone'
           Check (Test-Path (Join-Path $data 'pairing\inputline-host.conf')) 'pairings are kept for a later install'
+      # InputLine-Setup.exe: the pinned usbip-win2, then the MSI above.
+      - name: Build the combined installer
+        shell: pwsh
+        run: |
+          $usbip = ./installer/windows/get-usbip-win2.ps1
+          wix build installer/windows/Bundle.wxs -arch x64 `
+            -ext WixToolset.BootstrapperApplications.wixext -ext WixToolset.Util.wixext `
+            -d "Version=0.1.${{ github.run_number }}" -d MsiPath=InputLine-Setup.msi -d "UsbipInstaller=$usbip" `
+            -d "RepoUrl=${{ github.server_url }}/${{ github.repository }}" -d "RootDir=${{ github.workspace }}" `
+            -o InputLine-Setup.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Test the combined installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Check([bool] $ok, [string] $what) {
+            if (-not $ok) { Write-Host "::error::$what"; exit 1 }
+            Write-Host "ok: $what"
+          }
+          $roots = { @(Get-ChildItem Cert:\LocalMachine\Root | Where-Object { $_.Subject -match 'USBip' }) }
+          $before = (& $roots).Count
+
+          $process = Start-Process .\InputLine-Setup.exe -Wait -PassThru `
+            -ArgumentList '/quiet /norestart /log bundle-install.log UsbipArgs="/VERYSILENT /SUPPRESSMSGBOXES"'
+          Check ($process.ExitCode -in 0, 3010) "installs usbip-win2 and InputLine (exit $($process.ExitCode))"
+          Start-Sleep -Seconds 6
+          Check (Test-Path "$env:ProgramFiles\USBip\usbip.exe") 'usbip-win2 is installed'
+          Check ((Get-Service InputLine).Status -eq 'Running') 'the InputLine service runs'
+          & "$env:ProgramFiles\USBip\usbip.exe" --version
+          # usbip-win2's development builds add a test root certificate; the
+          # released installer must not, or InputLine can't ship it.
+          $added = (& $roots).Count - $before
+          Check ($added -eq 0) "usbip-win2 adds no certificate to the trusted root store ($added added)"
+          $apps = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' | Where-Object DisplayName -eq 'InputLine'
+          Check ($apps.Count -eq 1) "one InputLine in Installed apps ($($apps.Count))"
+
+          $process = Start-Process .\InputLine-Setup.exe -Wait -PassThru -ArgumentList '/uninstall /quiet /norestart /log bundle-uninstall.log'
+          Check ($process.ExitCode -in 0, 3010) "uninstalls (exit $($process.ExitCode))"
+          Check ($null -eq (Get-Service InputLine -ErrorAction SilentlyContinue)) 'the service is gone'
+          Check (Test-Path "$env:ProgramFiles\USBip\usbip.exe") 'usbip-win2 stays installed'
       - name: Installer logs
         if: failure()
         shell: pwsh
-        run: Get-ChildItem msi-*.log | ForEach-Object { Write-Host "==== $_"; Get-Content $_ -Tail 60 }
+        run: Get-ChildItem msi-*.log, bundle-*.log -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "==== $_"; Get-Content $_ -Tail 80 }
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
