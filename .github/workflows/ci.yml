@@ -76,6 +76,73 @@ jobs:
           if (-not (Select-String -Path $log -Pattern 'can now find this PC' -Quiet)) {
             Write-Host '::warning::DNS-SD registration was not confirmed on this runner'
           }
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
+      - name: Build the installer
+        run: >
+          wix build installer/windows/Couchlink.wxs -arch x64
+          -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext
+          -d Version=0.0.${{ github.run_number }} -d BinDir=build/host/Release -d "RootDir=${{ github.workspace }}"
+          -o Couchlink-Setup.msi
+      # Install, check, upgrade over the top, uninstall: on a real Windows.
+      - name: Test the installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-Msi([string[]] $arguments) {
+            $process = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+            return $process.ExitCode
+          }
+          function Check([bool] $ok, [string] $what) {
+            if (-not $ok) { Write-Host "::error::$what"; exit 1 }
+            Write-Host "ok: $what"
+          }
+          $data = Join-Path $env:ProgramData 'Couchlink'
+
+          # Pairings from an earlier 'couchlink-host install' come along.
+          New-Item -ItemType Directory -Force (Join-Path $env:APPDATA 'Couchlink') | Out-Null
+          Set-Content (Join-Path $env:APPDATA 'Couchlink\couchlink-host.conf') '# pairings from before the installer'
+          Remove-Item -Recurse -Force $data -ErrorAction SilentlyContinue
+
+          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-nousbip.log')
+          Check ($code -eq 1603) "refuses to install without usbip-win2 (exit $code)"
+
+          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-install.log', 'SKIPUSBIPCHECK=1')
+          if ($code -ne 0) { Get-Content msi-install.log -Tail 80 }
+          Check ($code -eq 0) "installs (exit $code)"
+          Start-Sleep -Seconds 6
+          $log = Join-Path $data 'couchlink-host.log'
+          Get-Content $log
+          Check ((Get-Service Couchlink).Status -eq 'Running') 'the Couchlink service runs'
+          Check ((Get-Service Couchlink).StartType -eq 'Automatic') 'the service starts with Windows'
+          Check (Select-String -Path $log -Pattern 'starting as a Windows service' -Quiet) 'the service logs to ProgramData'
+          Check (Select-String -Path $log -Pattern 'listening on UDP port 48150' -Quiet) 'the service listens on the link port'
+          Check ($null -ne (Get-NetFirewallRule -DisplayName 'Couchlink (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule exists'
+          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'earlier pairings were moved to ProgramData'
+          $acl = (icacls (Join-Path $data 'pairing')) -join "`n"
+          Write-Host $acl
+          Check (-not ($acl -match 'BUILTIN\\Users')) 'users cannot read the pairing keys'
+          $failure = (sc.exe qfailure Couchlink) -join "`n"
+          Check ($failure -match 'RESTART') 'the service restarts after a failure'
+          Check (Test-Path "$env:ProgramFiles\Couchlink\couchlink-host.exe") 'couchlink-host.exe is in Program Files'
+
+          $code = Invoke-Msi @('/i', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-reinstall.log', 'SKIPUSBIPCHECK=1')
+          Check ($code -eq 0) "installs again over itself (exit $code)"
+          Start-Sleep -Seconds 3
+          Check ((Get-Service Couchlink).Status -eq 'Running') 'the service runs after reinstalling'
+
+          $code = Invoke-Msi @('/x', 'Couchlink-Setup.msi', '/qn', '/l*v', 'msi-uninstall.log')
+          Check ($code -eq 0) "uninstalls (exit $code)"
+          Check ($null -eq (Get-Service Couchlink -ErrorAction SilentlyContinue)) 'the service is gone'
+          Check ($null -eq (Get-NetFirewallRule -DisplayName 'Couchlink (UDP 48150)' -ErrorAction SilentlyContinue)) 'the firewall rule is gone'
+          Check (-not (Test-Path "$env:ProgramFiles\Couchlink\couchlink-host.exe")) 'the program is gone'
+          Check (Test-Path (Join-Path $data 'pairing\couchlink-host.conf')) 'pairings are kept for a later install'
+      - name: Installer logs
+        if: failure()
+        shell: pwsh
+        run: Get-ChildItem msi-*.log | ForEach-Object { Write-Host "==== $_"; Get-Content $_ -Tail 60 }
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
@@ -83,6 +150,11 @@ jobs:
           path: |
             build/host/Release/couchlink-host.exe
             build/host/Release/couchlink-sim.exe
+      - name: Upload the installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Couchlink-Setup.msi
+          path: Couchlink-Setup.msi
 
   macos:
     name: macOS

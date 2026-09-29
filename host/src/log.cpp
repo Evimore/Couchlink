@@ -35,6 +35,8 @@ namespace couchlink::log {
   bool set_file(const std::string &path) {
     std::error_code error;
     std::filesystem::create_directories(std::filesystem::path(path).parent_path(), error);
+    // Keep the previous run's log, for example from before a crash or restart.
+    std::filesystem::rename(path, path + ".1", error);
     std::FILE *file = std::fopen(path.c_str(), "w");
     if (file == nullptr) {
       return false;

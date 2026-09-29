@@ -44,6 +44,8 @@ namespace couchlink {
 
     /** Default location: %APPDATA%\Couchlink\couchlink-host.conf or ~/.config/couchlink/couchlink-host.conf. */
     static std::string default_path();
+    /** Where versions before the installer kept pairings (%APPDATA% on Windows); empty elsewhere. */
+    static std::string legacy_path();
 
   private:
     std::string path_;

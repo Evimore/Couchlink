@@ -17,7 +17,7 @@ namespace couchlink::log {
   };
 
   void set_level(Level level);
-  /** Write to this file (truncated) instead of stderr, e.g. when running without a console. */
+  /** Write to this file instead of stderr, e.g. when running without a console. The previous one is kept as PATH.1. */
   bool set_file(const std::string &path);
   bool enabled(Level level);
   void write(Level level, const std::string &message);

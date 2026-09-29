@@ -1,5 +1,8 @@
 name: Release
 
+# Publishes Couchlink-Setup-vX.msi (Windows installer), a portable zip of
+# couchlink-host, and the unsigned Couchlink-vX-iOS.ipa.
+#
 # Two ways to release:
 # - On GitHub: Actions → Release → Run workflow, and enter a version such as
 #   0.2.0. The release (and its tag, v0.2.0) is made from the latest main.
@@ -63,10 +66,20 @@ jobs:
           Copy-Item build/host/Release/couchlink-host.exe, build/host/Release/couchlink-sim.exe $dir
           Copy-Item README.md, LICENSE, THIRD_PARTY_NOTICES.md, docs/host-setup-windows.md $dir
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
+      - name: Build the installer
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2 WixToolset.Firewall.wixext/5.0.2 WixToolset.UI.wixext/5.0.2
+          wix build installer/windows/Couchlink.wxs -arch x64 `
+            -ext WixToolset.Util.wixext -ext WixToolset.Firewall.wixext -ext WixToolset.UI.wixext `
+            -d Version=${{ needs.check.outputs.app-version }} -d BinDir=build/host/Release -d "RootDir=${{ github.workspace }}" `
+            -o "Couchlink-Setup-$env:TAG.msi"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: couchlink-${{ env.TAG }}-windows-x64.zip
+          path: |
+            Couchlink-Setup-${{ env.TAG }}.msi
+            couchlink-${{ env.TAG }}-windows-x64.zip
 
   couchlink-ios:
     name: Couchlink (iOS)

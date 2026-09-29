@@ -48,7 +48,21 @@ namespace couchlink {
   }  // namespace
 
   std::string ClientStore::default_path() {
+#ifdef _WIN32
+    // Shared by the service and an administrator terminal; see desktop::prepare_data_dirs().
+    const char *base = std::getenv("ProgramData");
+    return (std::filesystem::path(base && *base ? base : "C:\\ProgramData") / "Couchlink" / "pairing" / "couchlink-host.conf").string();
+#else
     return (config_dir("Couchlink") / "couchlink-host.conf").string();
+#endif
+  }
+
+  std::string ClientStore::legacy_path() {
+#ifdef _WIN32
+    return (config_dir("Couchlink") / "couchlink-host.conf").string();
+#else
+    return {};
+#endif
   }
 
   bool ClientStore::load() {

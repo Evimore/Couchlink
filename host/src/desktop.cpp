@@ -2,13 +2,19 @@
 
 #include "log.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <thread>
 
 #ifdef _WIN32
   #include <windows.h>
+
+  #include <aclapi.h>
+  #include <sddl.h>
+  #include <wtsapi32.h>
 #endif
 
 namespace couchlink::desktop {
@@ -16,6 +22,8 @@ namespace couchlink::desktop {
 #ifdef _WIN32
 
   namespace {
+    std::atomic<bool> g_service_mode {false};
+
     std::wstring widen(const std::string &text) {
       if (text.empty()) {
         return {};
@@ -46,11 +54,6 @@ namespace couchlink::desktop {
         }
         buffer.resize(buffer.size() * 2);
       }
-    }
-
-    std::string env(const char *name) {
-      const char *value = std::getenv(name);
-      return value ? value : "";
     }
 
     /** A PowerShell single-quoted string literal. */
@@ -134,6 +137,26 @@ namespace couchlink::desktop {
       "\n\n"
       "The code works for 2 minutes. If you did not ask for this, click OK and ignore it."
     );
+    if (g_service_mode) {
+      // A service has no desktop of its own: ask Windows to show the message
+      // in the signed-in user's session, without waiting for OK.
+      const DWORD session = WTSGetActiveConsoleSessionId();
+      if (session == 0xFFFFFFFF) {
+        log::warn("pairing: nobody is signed in to this PC to see the code");
+        return;
+      }
+      std::wstring title = L"Couchlink";
+      std::wstring message = text;
+      DWORD response = 0;
+      if (!WTSSendMessageW(
+            WTS_CURRENT_SERVER_HANDLE, session, title.data(), static_cast<DWORD>(title.size() * sizeof(wchar_t)),
+            message.data(), static_cast<DWORD>(message.size() * sizeof(wchar_t)),
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND, 120, &response, FALSE
+          )) {
+        log::warn("pairing: could not show the code on screen (error ", GetLastError(), ")");
+      }
+      return;
+    }
     std::thread([text] {
       MessageBoxW(nullptr, text.c_str(), L"Couchlink", MB_OK | MB_ICONINFORMATION | MB_TOPMOST | MB_SETFOREGROUND);
     }).detach();
@@ -155,13 +178,165 @@ namespace couchlink::desktop {
     return elevated;
   }
 
+  std::string data_dir() {
+    const char *base = std::getenv("ProgramData");
+    return std::string(base && *base ? base : "C:\\ProgramData") + "\\Couchlink";
+  }
+
+  namespace {
+    /**
+     * Replace a folder's permissions with `sddl`, not inherited from above.
+     * Files inside pick them up too.
+     */
+    bool secure_directory(const std::string &path, const wchar_t *sddl) {
+      std::error_code error;
+      std::filesystem::create_directories(path, error);
+      PSECURITY_DESCRIPTOR descriptor = nullptr;
+      if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, nullptr)) {
+        return false;
+      }
+      BOOL present = FALSE;
+      BOOL defaulted = FALSE;
+      PACL dacl = nullptr;
+      bool ok = GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted) && present;
+      if (ok) {
+        std::wstring wide = widen(path);
+        ok = SetNamedSecurityInfoW(
+               wide.data(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+               nullptr, nullptr, dacl, nullptr
+             ) == ERROR_SUCCESS;
+      }
+      LocalFree(descriptor);
+      return ok;
+    }
+
+    // Windows (SYSTEM) and administrators: full control; users: read (the log).
+    const wchar_t *const kDataDirSddl = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FR;;;BU)";
+    // Pairing keys: Windows and administrators only.
+    const wchar_t *const kPairingDirSddl = L"D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+  }  // namespace
+
+  bool prepare_data_dirs() {
+    if (!is_elevated()) {
+      return false;
+    }
+    const std::string dir = data_dir();
+    const bool ok = secure_directory(dir, kDataDirSddl) && secure_directory(dir + "\\pairing", kPairingDirSddl);
+    if (!ok) {
+      log::warn("could not set the permissions of ", dir, " (error ", GetLastError(), ")");
+    }
+    return ok;
+  }
+
+  bool service_installed() {
+    SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (manager == nullptr) {
+      return false;
+    }
+    const std::wstring name = widen(kServiceName);
+    SC_HANDLE service = OpenServiceW(manager, name.c_str(), SERVICE_QUERY_STATUS);
+    if (service != nullptr) {
+      CloseServiceHandle(service);
+    }
+    CloseServiceHandle(manager);
+    return service != nullptr;
+  }
+
+  namespace {
+    std::function<int()> g_serve;
+    std::function<void()> g_stop;
+    SERVICE_STATUS_HANDLE g_status_handle = nullptr;
+    SERVICE_STATUS g_status {};
+
+    void report_status(DWORD state, DWORD exit_code = NO_ERROR, DWORD wait_hint = 0) {
+      g_status.dwServiceType = SERVICE_WIN32_OWN_PROCESS;
+      g_status.dwCurrentState = state;
+      g_status.dwControlsAccepted = state == SERVICE_RUNNING ? SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_SHUTDOWN : 0;
+      g_status.dwWin32ExitCode = exit_code == NO_ERROR ? NO_ERROR : ERROR_SERVICE_SPECIFIC_ERROR;
+      g_status.dwServiceSpecificExitCode = exit_code;
+      g_status.dwWaitHint = wait_hint;
+      SetServiceStatus(g_status_handle, &g_status);
+    }
+
+    DWORD WINAPI service_control(DWORD control, DWORD, LPVOID, LPVOID) {
+      switch (control) {
+        case SERVICE_CONTROL_STOP:
+        case SERVICE_CONTROL_SHUTDOWN:
+          report_status(SERVICE_STOP_PENDING, NO_ERROR, 5000);
+          g_stop();
+          return NO_ERROR;
+        case SERVICE_CONTROL_INTERROGATE:
+          return NO_ERROR;
+        default:
+          return ERROR_CALL_NOT_IMPLEMENTED;
+      }
+    }
+
+    /** Restart after a crash or a failed start, so the PC stays reachable. */
+    void configure_recovery() {
+      SC_HANDLE manager = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+      if (manager == nullptr) {
+        return;
+      }
+      const std::wstring name = widen(kServiceName);
+      SC_HANDLE service = OpenServiceW(manager, name.c_str(), SERVICE_CHANGE_CONFIG | SERVICE_START);
+      if (service != nullptr) {
+        SC_ACTION actions[3] = {{SC_ACTION_RESTART, 5000}, {SC_ACTION_RESTART, 10000}, {SC_ACTION_RESTART, 60000}};
+        SERVICE_FAILURE_ACTIONSW failure {};
+        failure.dwResetPeriod = 24 * 60 * 60;
+        failure.cActions = 3;
+        failure.lpsaActions = actions;
+        ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS, &failure);
+        SERVICE_FAILURE_ACTIONS_FLAG flag {};
+        flag.fFailureActionsOnNonCrashFailures = TRUE;
+        ChangeServiceConfig2W(service, SERVICE_CONFIG_FAILURE_ACTIONS_FLAG, &flag);
+        CloseServiceHandle(service);
+      }
+      CloseServiceHandle(manager);
+    }
+
+    void WINAPI service_main(DWORD, LPWSTR *) {
+      const std::wstring name = widen(kServiceName);
+      g_status_handle = RegisterServiceCtrlHandlerExW(name.c_str(), service_control, nullptr);
+      if (g_status_handle == nullptr) {
+        return;
+      }
+      report_status(SERVICE_START_PENDING, NO_ERROR, 5000);
+      configure_recovery();
+      report_status(SERVICE_RUNNING);
+      const int code = g_serve();
+      report_status(SERVICE_STOPPED, static_cast<DWORD>(code));
+    }
+  }  // namespace
+
+  int run_service(const std::function<int()> &serve, const std::function<void()> &stop) {
+    g_serve = serve;
+    g_stop = stop;
+    g_service_mode = true;
+    std::wstring name = widen(kServiceName);
+    SERVICE_TABLE_ENTRYW table[] = {{name.data(), service_main}, {nullptr, nullptr}};
+    if (!StartServiceCtrlDispatcherW(table)) {
+      g_service_mode = false;
+      if (GetLastError() == ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) {
+        std::fprintf(stderr, "'couchlink-host service' is started by Windows (the Couchlink installer sets it up). In a terminal, use 'couchlink-host run'.\n");
+      }
+      return 1;
+    }
+    return 0;
+  }
+
   int install(const InstallOptions &options) {
+    if (service_installed()) {
+      std::fprintf(stderr, "Couchlink is installed with its installer and already runs in the background. Nothing to do.\n");
+      return 1;
+    }
     if (!is_elevated()) {
       std::fprintf(stderr, "Run 'couchlink-host install' from an administrator terminal (Terminal (Admin)).\n");
       return 1;
     }
 
-    const std::string log_dir = env("LOCALAPPDATA") + "\\Couchlink";
+    prepare_data_dirs();
+    const std::string log_dir = data_dir();
     std::string arguments = "run --hide-console --log " + arg_quote(log_dir + "\\couchlink-host.log");
     for (const auto &arg : options.run_arguments) {
       arguments += " " + arg_quote(arg);
@@ -175,9 +350,6 @@ namespace couchlink::desktop {
       "$user = \"$env:USERDOMAIN\\$env:USERNAME\"\n"
       "Stop-Installed\n"
       "New-Item -ItemType Directory -Force -Path $dir | Out-Null\n"
-      "New-Item -ItemType Directory -Force -Path " +
-      ps_quote(log_dir) +
-      " | Out-Null\n"
       "if ((Resolve-Path $source).Path -ne $exe) { Copy-Item -Force $source $exe }\n"
       "Write-Host \"Installed to $exe\"\n"
       // Only the local network and Tailscale can reach the link port.
@@ -210,6 +382,10 @@ namespace couchlink::desktop {
   }
 
   int uninstall() {
+    if (service_installed()) {
+      std::fprintf(stderr, "Couchlink was installed with its installer: remove it in Settings > Apps > Installed apps.\n");
+      return 1;
+    }
     if (!is_elevated()) {
       std::fprintf(stderr, "Run 'couchlink-host uninstall' from an administrator terminal (Terminal (Admin)).\n");
       return 1;
@@ -232,6 +408,23 @@ namespace couchlink::desktop {
 
   bool is_elevated() {
     return false;
+  }
+
+  std::string data_dir() {
+    return {};
+  }
+
+  bool prepare_data_dirs() {
+    return false;
+  }
+
+  bool service_installed() {
+    return false;
+  }
+
+  int run_service(const std::function<int()> &, const std::function<void()> &) {
+    std::fprintf(stderr, "'service' is for Windows. On Linux, run 'couchlink-host run' from a systemd unit.\n");
+    return 1;
   }
 
   int install(const InstallOptions &) {
