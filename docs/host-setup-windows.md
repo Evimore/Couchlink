@@ -4,7 +4,7 @@ You need Windows 10 (version 1809 or later) or Windows 11, with Steam installed.
 
 ## 1. Install usbip-win2
 
-Download the installer from [usbip-win2 releases](https://github.com/vadimgrn/usbip-win2/releases) (0.9.7 or newer) and install it. It lets InputLine plug a virtual Steam Controller into Windows. Its drivers are signed by Microsoft, so Secure Boot and anti-cheat stay happy and no test-signing mode is needed. Its authors recommend creating a [restore point](https://support.microsoft.com/en-us/windows/create-a-system-restore-point-77e02e2a-3298-c869-9974-ef5658ea3be9) first; USB devices pause for a moment while it installs.
+Download the installer from [usbip-win2 releases](https://github.com/vadimgrn/usbip-win2/releases) (0.9.7 or newer) and install it. It lets InputLine plug a virtual Steam Controller into Windows. Its drivers are signed by Microsoft, so it works with Secure Boot and needs no test-signing mode. Its authors recommend creating a [restore point](https://support.microsoft.com/en-us/windows/create-a-system-restore-point-77e02e2a-3298-c869-9974-ef5658ea3be9) first; USB devices pause for a moment while it installs.
 
 > HIDMaestro, which uses the same transport, pins usbip-win2 **0.9.7.5** and reports kernel-pool issues in 0.9.7.8. If attaching misbehaves, try another version and please open an issue with the details.
 
