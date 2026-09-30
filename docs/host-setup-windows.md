@@ -100,6 +100,7 @@ The log is `C:\ProgramData\InputLine\inputline-host.log` (the one from before th
 
 | Symptom | Try |
 |---|---|
+| Steam never sees the controller, and running `inputline-host demo 30` fails with `0xC0E90002` or "Device not available" | Windows' **Smart App Control** blocks part of usbip-win2. Check *Windows Security → App & browser control → Smart App Control*; while it's on, usbip-win2 can't attach the controller. It's usually only on for new Windows 11 installs. |
 | A red mark on the InputLine icon | usbip-win2 is missing or too old: the icon's menu says which and links to the download. Install it; InputLine notices within 30 seconds. |
 | `attach: ... failed` in the log | The `attach: usbip said` line just before it gives usbip's reason. Check that `C:\Program Files\USBip\usbip.exe` exists. If usbip-win2 lives elsewhere, add `--usbip-exe "C:\path\to\usbip.exe"` to `options.txt`. |
 | InputLine doesn't list the PC | Set the network's profile to **Private** in Windows settings (*Network & internet → your network*): Windows doesn't answer network discovery on Public networks. You can always enter the address instead. |

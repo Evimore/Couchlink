@@ -260,7 +260,7 @@ namespace {
 #else
     const char *name = std::getenv("HOSTNAME");
 #endif
-    return name && *name ? name : "Gaming PC";
+    return name && *name ? name : "PC";
   }
 
   bool valid_pin(const std::string &pin) {

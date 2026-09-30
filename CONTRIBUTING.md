@@ -4,12 +4,14 @@ Issues and pull requests are welcome. The most useful contributions right now ar
 
 ## Reporting a hardware result
 
-Please include:
+Open an issue with the **Test report** form: it asks for the details below.
 
 - PC OS and version, Steam client version, usbip-win2 version
 - iPad / iPhone model and iOS version
 - Controller firmware, if you know it
 - InputLine's **Share report** and `inputline-host.log`
+
+Both include your PC's name, IP addresses and the controller's serial number. Issues are public, so look them over first and replace anything you'd rather not share.
 
 ## Development
 

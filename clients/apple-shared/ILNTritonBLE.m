@@ -24,6 +24,20 @@ static const NSTimeInterval kNotifyRetryInterval = 1.0;
 // How often to look for paired controllers that iOS has reconnected, so a
 // controller switched on mid-stream is picked up.
 static const NSTimeInterval kKnownControllerPollInterval = 2.0;
+// A connected controller that isn't streaming after this long gets its setup
+// restarted, and after a few tries a fresh connection. Without this, a setup
+// interrupted (for example while the device was locked) stays stuck until the
+// controller is switched off and on.
+static const NSTimeInterval kSetupTimeout = 6.0;
+static const NSUInteger kMaxSetupRestarts = 2;
+
+/// Tell the delegate something worth a line in its event log.
+static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
+{
+    if ([delegate respondsToSelector:@selector(tritonLog:)]) {
+        [delegate tritonLog:message];
+    }
+}
 
 #pragma mark - ILNTritonDevice
 
@@ -40,6 +54,12 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 @property (nonatomic, strong, nullable) dispatch_source_t notifyRetryTimer;
 @property (nonatomic, copy, nullable) void (^pendingFeatureRead)(NSData *_Nullable);
 @property (nonatomic, strong, nullable) NSError *lastDisconnectError;
+@property (nonatomic, assign) CFAbsoluteTime setupStartedAt;
+@property (nonatomic, assign) NSUInteger setupRestarts;
+
+- (void)didConnect;
+- (void)didDisconnect;
+- (void)restartSetup;
 
 @end
 
@@ -69,7 +89,28 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 - (void)didConnect
 {
+    self.setupRestarts = 0;
+    id<ILNTritonBLEDelegate> delegate = self.delegate;
+    if ([delegate respondsToSelector:@selector(tritonWillSetUp:)]) {
+        [delegate tritonWillSetUp:self];
+    }
+    [self startSetup];
+}
+
+- (void)startSetup
+{
+    [self cancelNotifyRetry];
+    self.inputCharacteristic = nil;
+    self.reportCharacteristic = nil;
+    [self.outputCharacteristics removeAllObjects];
+    self.setupStartedAt = CFAbsoluteTimeGetCurrent();
     [self.peripheral discoverServices:@[[CBUUID UUIDWithString:kValveService]]];
+}
+
+- (void)restartSetup
+{
+    self.setupRestarts += 1;
+    [self startSetup];
 }
 
 - (void)didDisconnect
@@ -186,6 +227,9 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverServices:(NSError *)error
 {
+    if (error != nil) {
+        TritonLog(self.delegate, [NSString stringWithFormat:@"Bluetooth: %@ didn't list its services (%@)", self.name, error.localizedDescription]);
+    }
     for (CBService *service in peripheral.services) {
         if ([service.UUID isEqual:[CBUUID UUIDWithString:kValveService]]) {
             [peripheral discoverCharacteristics:nil forService:service];
@@ -288,6 +332,8 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 @property (nonatomic, assign) NSUInteger scanGeneration;
 @property (nonatomic, strong, nullable) dispatch_source_t pollTimer;
 @property (nonatomic, copy, nullable) NSString *restoreIdentifier;
+/// Controllers that streamed to this app since it started.
+@property (nonatomic, strong) NSMutableSet<NSUUID *> *streamedIdentifiers;
 
 @end
 
@@ -308,6 +354,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
         _queue = dispatch_queue_create("com.evimore.inputline.ble", DISPATCH_QUEUE_SERIAL);
         dispatch_set_target_queue(_queue, dispatch_get_global_queue(QOS_CLASS_USER_INTERACTIVE, 0));
         _devices = [NSMutableDictionary dictionary];
+        _streamedIdentifiers = [NSMutableSet set];
     }
     return self;
 }
@@ -349,7 +396,15 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 - (void)scanForNewControllers:(NSTimeInterval)seconds
 {
     dispatch_async(self.queue, ^{
+        [self refreshLocked];
         [self scanLocked:seconds];
+    });
+}
+
+- (void)refresh
+{
+    dispatch_async(self.queue, ^{
+        [self refreshLocked];
     });
 }
 
@@ -369,6 +424,60 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 }
 
 #pragma mark Internals (Bluetooth queue)
+
+- (void)refreshLocked
+{
+    if (!self.running || self.central.state != CBManagerStatePoweredOn) {
+        return;
+    }
+    [self connectRememberedControllers];
+    [self connectKnownControllers];
+    [self checkStalledDevices];
+}
+
+/// This app's own controller: it streamed here before (this run or an earlier one).
+- (BOOL)isKnown:(NSUUID *)identifier
+{
+    return [self.streamedIdentifiers containsObject:identifier] || [self.rememberedIdentifiers containsObject:identifier];
+}
+
+/// Controllers that should be streaming but aren't: get each one going again.
+- (void)checkStalledDevices
+{
+    const CFAbsoluteTime now = CFAbsoluteTimeGetCurrent();
+    for (ILNTritonDevice *device in self.devices.allValues) {
+        CBPeripheral *peripheral = device.peripheral;
+        if (device.ready) {
+            [self.streamedIdentifiers addObject:peripheral.identifier];
+            continue;
+        }
+        const BOOL known = [self isKnown:peripheral.identifier];
+        if (peripheral.state == CBPeripheralStateDisconnected) {
+            // No connection pending (an attempt failed). Ask again for our
+            // own controllers, so iOS connects them whenever they're on.
+            if (known) {
+                [self.central connectPeripheral:peripheral options:nil];
+            }
+            continue;
+        }
+        if (peripheral.state != CBPeripheralStateConnected || now - device.setupStartedAt < kSetupTimeout) {
+            continue;
+        }
+        // A new controller waits for the user to accept the pairing request;
+        // its notification retries cover that.
+        if (device.inputCharacteristic != nil && !known) {
+            continue;
+        }
+        if (device.setupRestarts < kMaxSetupRestarts) {
+            TritonLog(self.delegate, [NSString stringWithFormat:@"Bluetooth: %@ is connected but not sending; setting it up again", device.name]);
+            [device restartSetup];
+        } else {
+            // A fresh connection; didDisconnectPeripheral: asks for it.
+            TritonLog(self.delegate, [NSString stringWithFormat:@"Bluetooth: %@ still not sending; reconnecting to it", device.name]);
+            [self.central cancelPeripheralConnection:peripheral];
+        }
+    }
+}
 
 - (void)scanLocked:(NSTimeInterval)seconds
 {
@@ -401,6 +510,7 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
         ILNTritonBLE *strongSelf = weakSelf;
         if (strongSelf.running && strongSelf.central.state == CBManagerStatePoweredOn) {
             [strongSelf connectKnownControllers];
+            [strongSelf checkStalledDevices];
         }
     });
     self.pollTimer = timer;
@@ -493,12 +603,21 @@ static const NSTimeInterval kKnownControllerPollInterval = 2.0;
 
 - (void)centralManager:(CBCentralManager *)central didConnectPeripheral:(CBPeripheral *)peripheral
 {
-    [self.devices[peripheral.identifier] didConnect];
+    ILNTritonDevice *device = self.devices[peripheral.identifier];
+    TritonLog(self.delegate, [NSString stringWithFormat:@"Bluetooth: connected to %@, setting it up", device.name ?: @"a controller"]);
+    [device didConnect];
 }
 
 - (void)centralManager:(CBCentralManager *)central didFailToConnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error
 {
-    [self.devices removeObjectForKey:peripheral.identifier];
+    ILNTritonDevice *device = self.devices[peripheral.identifier];
+    TritonLog(self.delegate, [NSString stringWithFormat:@"Bluetooth: couldn't connect to %@ (%@)", device.name ?: @"a controller",
+                                                        error.localizedDescription ?: @"no reason given"]);
+    // Our own controllers stay: checkStalledDevices asks again. Others (a
+    // stranger's controller in pairing mode) are let go.
+    if (![self isKnown:peripheral.identifier]) {
+        [self.devices removeObjectForKey:peripheral.identifier];
+    }
 }
 
 - (void)centralManager:(CBCentralManager *)central didDisconnectPeripheral:(CBPeripheral *)peripheral error:(NSError *)error

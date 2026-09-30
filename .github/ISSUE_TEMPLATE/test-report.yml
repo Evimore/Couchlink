@@ -1,0 +1,59 @@
+name: Test report
+description: Tried InputLine? Tell us how it went, whether it worked or not.
+labels: ["test report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for trying InputLine. Reports from real setups are the most useful help right now, including "it just worked".
+
+        The app's report and the PC's log include your PC's name, IP addresses and the controller's serial number. Issues are public, so look them over first and replace anything you'd rather not share.
+  - type: dropdown
+    id: result
+    attributes:
+      label: Did it work?
+      options:
+        - Yes, everything works
+        - Mostly, with some problems (below)
+        - No
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: iPad or iPhone
+      description: Model and iOS version. For Apple TV, also the Apple TV model.
+      placeholder: iPad Air (M2), iPadOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: PC
+      description: Windows version, usbip-win2 version, InputLine version.
+      placeholder: Windows 11 24H2, usbip-win2 0.9.8.1, InputLine 0.3.0-beta.4
+    validations:
+      required: true
+  - type: input
+    id: streaming
+    attributes:
+      label: Streaming
+      description: Streaming app and host, and whether you play at home or over a VPN.
+      placeholder: Moonlight + Apollo, home Wi-Fi
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Leave empty if everything worked.
+  - type: textarea
+    id: report
+    attributes:
+      label: InputLine report
+      description: In InputLine, Diagnostics → Share report (or Copy), then paste it here.
+      render: text
+  - type: textarea
+    id: log
+    attributes:
+      label: PC log
+      description: C:\ProgramData\InputLine\inputline-host.log, or the part around the problem.
+      render: text

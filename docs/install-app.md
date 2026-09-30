@@ -6,7 +6,7 @@ The same app runs on iPad and iPhone (iOS / iPadOS 15 or later).
 
 ## What you need
 
-- A Windows PC, usually the gaming PC.
+- A Windows PC, usually the one you stream from.
 - An Apple ID. A free one works, with limits (see [Free Apple ID limits](#free-apple-id-limits)).
 - A USB cable, for the first install.
 - The PC side set up first: [Windows host setup](host-setup-windows.md).
@@ -37,7 +37,7 @@ Open the [Releases](../../../releases) page and download `InputLine-vX.Y.Z-iOS.i
 1. Open InputLine and allow **Local Network** access when asked. Your PC shows up under **Found on this network**; tap it. (If it doesn't, enter the PC's address and tap **Connect**; see below.)
 2. A 6-digit code pops up on the PC's screen. Type it into InputLine.
 3. Put the Steam Controller in Bluetooth pairing mode, tap **Pair a new controller**, and accept the pairing request. Allow **Bluetooth** when asked.
-4. The controller shows as "full Steam Input on *your PC*". Steam now lists a wired Steam Controller.
+4. InputLine shows the controller as **Connected to *your PC***, and Steam lists a wired Steam Controller.
 5. Switch to your streaming app (Moonlight, for example) and play. InputLine keeps working in the background.
 
 From then on, just switch the controller on: it reconnects by itself, even while another app is in front.
@@ -47,7 +47,7 @@ From then on, just switch the controller on: it reconnects by itself, even while
 | Where you are | Address |
 |---|---|
 | At home, same network as the PC | Nothing to type: InputLine finds the PC. Otherwise, its local address, for example `192.168.1.20` (`ipconfig` on the PC shows it) |
-| Away from home, through a VPN such as [Tailscale](https://tailscale.com) | The PC's address on the VPN. With Tailscale, its MagicDNS name (for example `gaming-pc`) stays the same; `inputline-host install` allows Tailscale through the firewall. |
+| Away from home, through a VPN such as [Tailscale](https://tailscale.com) | The PC's address on the VPN. With Tailscale, its MagicDNS name (for example `my-pc`) stays the same; the InputLine installer allows Tailscale through the firewall. |
 
 Use the same address your streaming app uses. If the PC's local address changes later, InputLine finds it again by itself.
 
@@ -94,4 +94,6 @@ The Apple TV doesn't see the controller, so the streaming app's controller short
 
 1. In InputLine, tap **Share report**.
 2. On the PC, grab `C:\ProgramData\InputLine\inputline-host.log`.
-3. Open an issue with both, and describe what you did.
+3. Open an issue with both (the **Test report** form), and describe what you did.
+
+Both include your PC's name, IP addresses and the controller's serial number. Issues are public, so look them over first and replace anything you'd rather not share.

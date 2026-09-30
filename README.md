@@ -3,7 +3,7 @@
 <h1 align="center">InputLine</h1>
 
 <p align="center"><b>Stream with Moonlight, keep your Steam Controller.</b><br>
-Full Steam Input on your gaming PC while you play on an iPad, iPhone or Apple TV, with any streaming app.</p>
+Full Steam Input on your PC while you play on an iPad or iPhone, with any streaming app.</p>
 
 ---
 
@@ -16,10 +16,10 @@ Steam Link is the only streaming app that brings the Steam Controller across wit
 - **Easy to live with:** the PC side is a Windows installer that runs in the background; the app finds your PC on the network and reconnects the controller by itself.
 - **Free and open source.**
 
-> **Status: early, and working.** Tested end to end with a 2026 Steam Controller, an iPad and a Windows PC: Steam shows full Steam Input and every input works, with the same feel as Steam Link. The app isn't on the App Store yet, so you install it yourself for now (free, from Windows). See the [roadmap](docs/roadmap.md).
+> **Status: public beta.** It works end to end on one setup so far: a 2026 Steam Controller, an iPad and a Windows 11 PC. Steam shows full Steam Input, every input works, and it feels the same as Steam Link. iPhone, Apple TV (through an iPhone) and Windows 10 haven't been tested yet. If you try InputLine, please [say how it went](../../issues/new/choose), whether it worked or not. The app isn't on the App Store yet, so you install it yourself (free, from Windows). See the [roadmap](docs/roadmap.md).
 
 ```
- iPad / iPhone                                        Gaming PC
+ iPad / iPhone                                        PC
 ┌──────────────────────────────┐            ┌──────────────────────────────────────┐
 │ Steam Controller ──BLE──►    │            │ InputLine service                    │
 │ InputLine (in the background)│ ─────────► │   └► virtual wired Steam Controller  │
@@ -45,11 +45,15 @@ Steam Link is the only streaming app that brings the Steam Controller across wit
 
 The order doesn't matter: the installer's last screen says whether usbip-win2 is there, and until it is, InputLine's icon next to the clock shows a red mark with a download link.
 
+> If Windows' **Smart App Control** is on, it blocks part of usbip-win2 and Steam never sees the controller. See [Troubleshooting](docs/host-setup-windows.md#troubleshooting).
+
 That's all on the PC. InputLine now runs in the background and starts with Windows. More in the [Windows setup guide](docs/host-setup-windows.md).
 
 ### 2. Install the app
 
 Download the **InputLine** app (`InputLine-…-iOS.ipa`) from [Releases](../../releases) and install it from your PC with Sideloadly and a free Apple ID. Step by step: [Install InputLine](docs/install-app.md).
+
+With a free Apple ID, apps you install yourself stop opening after **7 days** until they're re-signed. Sideloadly can re-sign InputLine by itself while the iPad or iPhone is on the same Wi-Fi as the PC; your settings and pairing are kept.
 
 ### 3. Pair and play
 
@@ -62,12 +66,12 @@ From then on, just switch the controller on and stream. Leave InputLine in the b
 
 ### Apple TV
 
-tvOS doesn't let apps use Bluetooth in the background, so InputLine runs on an iPhone (or iPad) near you instead: pair the controller with the iPhone, keep it in your pocket, and stream on the Apple TV as usual. Use the Siri Remote to leave the stream. Details: [Apple TV](docs/install-app.md#apple-tv).
+Not tested yet. tvOS doesn't let apps use Bluetooth in the background, so InputLine runs on an iPhone (or iPad) near you instead: pair the controller with the iPhone, keep the iPhone locked in your pocket, and stream on the Apple TV as usual. Use the Siri Remote to leave the stream. Details: [Apple TV](docs/install-app.md#apple-tv).
 
 ## Questions
 
 **Does it add lag?**
-About the same as Steam Link. iOS reads the controller over Bluetooth every 15 ms, for every app, and the hop to the PC takes a millisecond or two on a home network. See [Checking smoothness](docs/timing.md).
+Very little. iOS reads the controller over Bluetooth every 15 ms, for every app, Steam Link included, and the hop to the PC takes a millisecond or two on a home network. A side-by-side measurement against Steam Link is on the [roadmap](docs/roadmap.md). See [Checking smoothness](docs/timing.md).
 
 **Do I need to change Moonlight or my streaming host?**
 No. InputLine runs next to them and talks to the PC on its own.

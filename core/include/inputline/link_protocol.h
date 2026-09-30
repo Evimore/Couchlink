@@ -3,7 +3,7 @@
  * @brief The UDP "link" between a streaming client and inputline-host.
  *
  * The client (the InputLine app on an iPad or iPhone) sends the controller's
- * raw HID reports straight to inputline-host on the gaming PC, next to the
+ * raw HID reports straight to inputline-host on the PC, next to the
  * streaming app's own stream. Keeping the controller on its own channel means the streaming host
  * (Vibepollo, Sunshine, Apollo...) needs no changes at all.
  *

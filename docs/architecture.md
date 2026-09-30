@@ -18,7 +18,7 @@ Do what Steam Link does, next to any streaming app:
 4. **Return** what Steam sends to the controller (haptics, settings) to the device, which writes it to the real controller.
 
 ```
- Steam Controller                iPad / iPhone                               Gaming PC
+ Steam Controller                iPad / iPhone                               PC
  ┌──────────────┐  BLE GATT   ┌─────────────────────────┐   UDP 48150   ┌────────────────────────────────────────┐
  │ state 0x45/47├────────────►│ ILNTritonBLE            │               │ inputline-host                         │
  │              │             │   └► InputLine link     │ Input ───────►│  LinkServer ─► SteamControllerDevice   │

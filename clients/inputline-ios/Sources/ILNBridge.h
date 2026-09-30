@@ -3,7 +3,7 @@
 //  InputLine
 //
 //  Reads the Steam Controller over Bluetooth and forwards its raw reports to
-//  inputline-host on the gaming PC, which plugs in a virtual wired Steam
+//  inputline-host on the PC, which plugs in a virtual wired Steam
 //  Controller. Runs in the background, next to any streaming app.
 //
 
@@ -83,7 +83,7 @@ typedef NS_ENUM(NSInteger, ILNControllerState) {
 /// Call once at launch, on the main thread.
 - (void)start;
 
-/// Save a PC address ("192.168.1.20", "gaming-pc.local", "100.64.1.2", "[fe80::1]:48150") and connect.
+/// Save a PC address ("192.168.1.20", "my-pc.local", "100.64.1.2", "[fe80::1]:48150") and connect.
 - (void)connectToPC:(NSString *)address;
 
 /// The PC section's Disconnect: end the link, unplug the controllers on the

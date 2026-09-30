@@ -32,6 +32,14 @@ NS_ASSUME_NONNULL_BEGIN
 /// The user has not allowed this app to use Bluetooth.
 - (void)tritonBluetoothUnauthorized;
 
+/// Connected; setting the controller up until it streams (then
+/// tritonDidBecomeReady:). Called on the Bluetooth queue.
+- (void)tritonWillSetUp:(ILNTritonDevice *)device;
+
+/// Something worth a line in the event log (connecting, setup retries).
+/// Called on the Bluetooth queue.
+- (void)tritonLog:(NSString *)message;
+
 @end
 
 @interface ILNTritonDevice : NSObject
@@ -78,7 +86,13 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)stop;
 
 /// Look for controllers in pairing mode for the given number of seconds.
+/// Also does what -refresh does.
 - (void)scanForNewControllers:(NSTimeInterval)seconds;
+
+/// Pick up controllers that iOS connected while the app wasn't running, and
+/// restart any that are connected but not streaming. For when the app comes
+/// back to the foreground.
+- (void)refresh;
 
 @property (nonatomic, readonly) NSArray<ILNTritonDevice *> *readyDevices;
 

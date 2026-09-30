@@ -205,6 +205,7 @@ namespace {
     NSString *_hostName;
     NSString *_clientName;  // read once on the main thread
     ILNLinkState _state;
+    UIBackgroundTaskIdentifier _setupTask;  // main thread: time to finish setting up a controller
     CFAbsoluteTime _stateEnteredAt;
     CFAbsoluteTime _lastSend;
     CFAbsoluteTime _lastService;
@@ -260,6 +261,7 @@ namespace {
 {
     if ((self = [super init])) {
         _socket = -1;
+        _setupTask = UIBackgroundTaskInvalid;
         _rttMs = -1;
         _controllers = [NSMutableDictionary dictionary];
         _liveSummary = @"";
@@ -504,6 +506,7 @@ namespace {
 - (void)willEnterForeground
 {
     [_discovery start];
+    [_ble refresh];
     dispatch_async(_queue, ^{
         self->_inBackground = NO;
         self->_timingForeground.break_sequence();
@@ -614,7 +617,7 @@ namespace {
 {
     ILNStatus *status = [self status];
     NSMutableString *text = [NSMutableString string];
-    [text appendFormat:@"InputLine %@ on %@ (iOS %@)\n", [NSBundle mainBundle].infoDictionary[@"CFBundleShortVersionString"],
+    [text appendFormat:@"InputLine %@ on %@ (iOS %@)\n", _appVersion,
                        [UIDevice currentDevice].model, [UIDevice currentDevice].systemVersion];
     [text appendFormat:@"Link: %@\n", status.linkText];
     [text appendFormat:@"Controllers: %@\n", status.controllers.count > 0 ? [status.controllers componentsJoinedByString:@"; "] : @"none"];
@@ -1351,6 +1354,9 @@ namespace {
 
 - (void)tritonDidBecomeReady:(ILNTritonDevice *)device
 {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [self endSetupTask];
+    });
     dispatch_async(_queue, ^{
         if (self->_controllers[device.identifier] != nil) {
             return;
@@ -1394,6 +1400,39 @@ namespace {
             [self sendDatagram:self->_session->make_detach(controller.linkIndex)];
         }
         [self->_controllers removeObjectForKey:device.identifier];
+    });
+}
+
+// Setting a controller up takes a few Bluetooth round trips. When it connects
+// while InputLine is in the background (or the device is locked), ask iOS for
+// the time to finish; once it streams, its reports keep InputLine running.
+- (void)tritonWillSetUp:(ILNTritonDevice *)device
+{
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self->_setupTask != UIBackgroundTaskInvalid) {
+            return;
+        }
+        self->_setupTask = [[UIApplication sharedApplication] beginBackgroundTaskWithName:@"Controller setup" expirationHandler:^{
+            [self endSetupTask];
+        }];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(25 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self endSetupTask];
+        });
+    });
+}
+
+- (void)endSetupTask
+{
+    if (_setupTask != UIBackgroundTaskInvalid) {
+        [[UIApplication sharedApplication] endBackgroundTask:_setupTask];
+        _setupTask = UIBackgroundTaskInvalid;
+    }
+}
+
+- (void)tritonLog:(NSString *)message
+{
+    dispatch_async(_queue, ^{
+        [self logEvent:message];
     });
 }
 

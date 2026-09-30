@@ -1,6 +1,6 @@
 # InputLine for iPad and iPhone
 
-InputLine connects your Steam Controller to your gaming PC with full Steam Input, next to **any** streaming app, such as Moonlight.
+InputLine connects your Steam Controller to your PC with full Steam Input, next to **any** streaming app, such as Moonlight.
 
 It reads the controller over Bluetooth and forwards its raw reports to `inputline-host` on the PC, which plugs in a virtual wired Steam Controller. InputLine keeps running in the background while you stream.
 
