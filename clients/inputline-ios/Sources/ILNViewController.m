@@ -683,6 +683,9 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
     for (NSUInteger i = 0; i < controllers.count; ++i) {
         ILNStatusRow *row = (ILNStatusRow *)_controllerRows.arrangedSubviews[i];
         NSString *title = controllers.count > 1 ? [NSString stringWithFormat:@"Steam Controller %lu", (unsigned long)i + 1] : @"Steam Controller";
+        if (controllers[i].batteryLevel >= 0) {
+            title = [NSString stringWithFormat:@"%@ · %ld%%", title, (long)controllers[i].batteryLevel];
+        }
         switch (controllers[i].state) {
             case ILNControllerStateOnPC:
                 [row setSymbol:@"gamecontroller.fill" title:title status:[NSString stringWithFormat:@"Connected to %@", pc] color:ILNGreen() busy:NO];
@@ -756,6 +759,7 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
     status.events = @[];
     ILNControllerInfo *controller = [[ILNControllerInfo alloc] init];
     controller.name = @"Steam Controller";
+    controller.batteryLevel = -1;
     if ([state isEqualToString:@"setup"]) {
         status.linkState = ILNLinkStateNoPC;
         status.pcName = @"";
@@ -778,6 +782,7 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
         status.linkUp = YES;
         status.rttMs = 2.4;
         controller.state = ILNControllerStateOnPC;
+        controller.batteryLevel = 82;
         status.controllerInfo = @[controller];
     }
     return status;

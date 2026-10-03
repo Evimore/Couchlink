@@ -33,6 +33,8 @@ typedef NS_ENUM(NSInteger, ILNControllerState) {
 @interface ILNControllerInfo : NSObject
 @property (nonatomic, copy) NSString *name;
 @property (nonatomic) ILNControllerState state;
+/// Battery percentage, or -1 if the controller hasn't said.
+@property (nonatomic) NSInteger batteryLevel;
 @end
 
 /// A snapshot for the UI; safe to read on the main thread.

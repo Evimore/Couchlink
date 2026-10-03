@@ -36,6 +36,12 @@ NS_ASSUME_NONNULL_BEGIN
 /// tritonDidBecomeReady:). Called on the Bluetooth queue.
 - (void)tritonWillSetUp:(ILNTritonDevice *)device;
 
+/// A battery report (0x43, report ID first), in the layout the controller
+/// uses over USB: from Valve's own characteristic when the controller has
+/// one, otherwise built from the standard Battery Service's level.
+/// Called on the Bluetooth queue when it changes and after -readBattery.
+- (void)triton:(ILNTritonDevice *)device didReceiveBatteryReport:(NSData *)report;
+
 /// Something worth a line in the event log (connecting, setup retries).
 /// Called on the Bluetooth queue.
 - (void)tritonLog:(NSString *)message;
@@ -50,6 +56,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) uint8_t inputReportId;
 /// Why the last connection ended, as CoreBluetooth reported it (nil if unknown).
 @property (nonatomic, readonly, nullable) NSError *lastDisconnectError;
+/// Battery percentage, or -1 until the controller has said.
+@property (nonatomic, readonly) NSInteger batteryLevel;
+/// YES once Valve's own battery report arrived; NO if only the plain level is known.
+@property (nonatomic, readonly) BOOL batteryFromReport;
+
+/// Ask the controller for its battery again (the answer comes through the delegate).
+- (void)readBattery;
 
 /// Write an output report (haptics / rumble, IDs 0x80-0x89). Report ID first.
 - (BOOL)sendOutputReport:(NSData *)report;

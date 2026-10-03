@@ -45,8 +45,8 @@
 - [ ] Settle whether Steam uses the IMU quaternion in report `0x42`. If it does, compute orientation host-side from gyro and accel instead of sending identity.
 - [ ] Haptics end to end: trackpad clicks and rumble felt on the controller
 - [ ] Measure input latency against Steam Link (240 fps camera, same TV)
+- [ ] Battery: the app reads it over Bluetooth and passes it to Steam; confirm on real hardware which source the controller offers (Valve's report 0x43 or the standard battery level)
 
 ## Later
 
 - [ ] 2015 Steam Controller (BLE `0x1106`, wired `28DE:1102` persona)
-- [ ] Battery reports over Bluetooth

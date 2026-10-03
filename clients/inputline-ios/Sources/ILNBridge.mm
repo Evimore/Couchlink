@@ -47,6 +47,8 @@ namespace {
     // background does not run while the controller is idle, so after a longer
     // pause assume the session is gone and start a new one straight away.
     const NSTimeInterval kResumeAfterSilence = 2.5;
+    // Asked for even if the controller also sends changes by itself.
+    const NSTimeInterval kBatteryReadInterval = 60.0;
     const NSUInteger kMaxEvents = 200;
     const int kMaxControllers = 4;
 
@@ -175,6 +177,8 @@ namespace {
 // handed back to this device since. After a network drop the PC then keeps
 // its virtual controller instead of plugging in a new one.
 @property (nonatomic, assign) BOOL keptSettings;
+// The controller's latest battery report (0x43), sent to the PC on attach and on change.
+@property (nonatomic, copy, nullable) NSData *batteryReport;
 // Each input datagram also carries the previous report, so the PC can make
 // up for a lost datagram.
 @property (nonatomic, assign) std::uint32_t sequence;
@@ -209,6 +213,7 @@ namespace {
     CFAbsoluteTime _stateEnteredAt;
     CFAbsoluteTime _lastSend;
     CFAbsoluteTime _lastService;
+    CFAbsoluteTime _lastBatteryRead;
     std::uint64_t _probeNonce;
     int _helloAttempts;
     BOOL _everConnected;
@@ -540,12 +545,16 @@ namespace {
                        : self->_state != ILNLinkStateConnected ? ILNControllerStateWaitingForPC
                        : controller.attached ? ILNControllerStateOnPC
                        : ILNControllerStateConnecting;
+            info.batteryLevel = controller.device.batteryLevel;
             [infos addObject:info];
             NSString *state = info.state == ILNControllerStateOnThisDevice ? @"Disconnected from PC"
                             : info.state == ILNControllerStateWaitingForPC ? @"Waiting for PC"
                             : info.state == ILNControllerStateOnPC ? @"Connected to PC"
                             : @"Connecting to PC...";
-            [controllers addObject:[NSString stringWithFormat:@"%@: %@", info.name, state]];
+            NSString *battery = info.batteryLevel >= 0 ? [NSString stringWithFormat:@", battery %ld%%%@", (long)info.batteryLevel,
+                                                                                    controller.device.batteryFromReport ? @"" : @" (level only)"]
+                                                       : @", battery unknown";
+            [controllers addObject:[NSString stringWithFormat:@"%@: %@%@", info.name, state, battery]];
         }
         status.controllers = controllers;
         status.controllerInfo = infos;
@@ -836,6 +845,12 @@ namespace {
     }
     _lastService = now;
     const CFAbsoluteTime inState = now - _stateEnteredAt;
+    if (now - _lastBatteryRead >= kBatteryReadInterval) {
+        _lastBatteryRead = now;
+        for (ILNController *controller in _controllers.allValues) {
+            [controller.device readBattery];
+        }
+    }
 
     switch (_state) {
         case ILNLinkStateNoPC:
@@ -1086,6 +1101,7 @@ namespace {
                 controller.attached = event.attach_ack.status == link::AttachStatus::kOk;
                 if (controller.attached) {
                     controller.keptSettings = YES;
+                    [self sendBattery:controller];  // Steam shows it straight away
                 }
                 if (!controller.attached && event.attach_ack.status == link::AttachStatus::kBackendUnavailable && !wasAttached) {
                     [self tellUser:@"The PC could not create the virtual controller. Is usbip-win2 installed?"];
@@ -1380,6 +1396,7 @@ namespace {
         // Mouse mode is on after power-up; the next service tick decides.
         controller.mouseModeOn = YES;
         [self identify:controller];
+        [controller.device readBattery];  // a report sent during setup arrived before this
         [self service];
     });
 }
@@ -1427,6 +1444,33 @@ namespace {
         [[UIApplication sharedApplication] endBackgroundTask:_setupTask];
         _setupTask = UIBackgroundTaskInvalid;
     }
+}
+
+- (void)triton:(ILNTritonDevice *)device didReceiveBatteryReport:(NSData *)report
+{
+    dispatch_async(_queue, ^{
+        ILNController *controller = self->_controllers[device.identifier];
+        if (controller == nil) {
+            return;  // not set up yet; it is read again once it is
+        }
+        if (controller.batteryReport == nil) {
+            [self logEvent:[NSString stringWithFormat:@"%@: battery %ld%%, %@", device.name, (long)device.batteryLevel,
+                                                      device.batteryFromReport ? @"from the controller's battery report"
+                                                                               : @"from the standard battery level (no charging state)"]];
+        }
+        controller.batteryReport = report;
+        [self sendBattery:controller];
+    });
+}
+
+/// The controller's battery to the PC, which passes it to Steam. Link queue.
+- (void)sendBattery:(ILNController *)controller
+{
+    if (controller.batteryReport == nil || !controller.attached || self->_paused || self->_state != ILNLinkStateConnected || !self->_session) {
+        return;
+    }
+    NSData *report = controller.batteryReport;
+    [self sendDatagram:self->_session->make_input(controller.linkIndex, (const std::uint8_t *)report.bytes, report.length)];
 }
 
 - (void)tritonLog:(NSString *)message

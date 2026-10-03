@@ -18,6 +18,14 @@ static NSString *const kInput45Characteristic = @"100F6C7A-1735-4313-B402-385671
 static NSString *const kInput47Characteristic = @"100F6C7C-1735-4313-B402-38567131E5F3";
 static NSString *const kValveUUIDSuffix = @"-1735-4313-B402-38567131E5F3";
 static NSString *const kDeviceInformationService = @"180A";
+// Battery: Valve's own report 0x43 (input report N lives at 100F6C(N + 0x35)),
+// or the standard Battery Service's level when there is no such characteristic.
+static NSString *const kBatteryReportCharacteristic = @"100F6C78-1735-4313-B402-38567131E5F3";
+static NSString *const kBatteryService = @"180F";
+static NSString *const kBatteryLevelCharacteristic = @"2A19";
+static const uint8_t kBatteryReportId = 0x43;
+static const size_t kBatteryReportPayload = 14;  // TritonBatteryStatus_t
+static const uint8_t kChargeStateDischarging = 1;  // EChargeState
 
 static const size_t kStateReportPayload = 45;
 static const NSTimeInterval kNotifyRetryInterval = 1.0;
@@ -54,6 +62,10 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
 @property (nonatomic, strong, nullable) dispatch_source_t notifyRetryTimer;
 @property (nonatomic, copy, nullable) void (^pendingFeatureRead)(NSData *_Nullable);
 @property (nonatomic, strong, nullable) NSError *lastDisconnectError;
+@property (nonatomic, strong, nullable) CBCharacteristic *batteryReportCharacteristic;
+@property (nonatomic, strong, nullable) CBCharacteristic *batteryLevelCharacteristic;
+@property (nonatomic, assign) BOOL batteryFromReport;  // Valve's report seen: ignore the plain level
+@property (nonatomic, assign) NSInteger batteryLevel;
 @property (nonatomic, assign) CFAbsoluteTime setupStartedAt;
 @property (nonatomic, assign) NSUInteger setupRestarts;
 
@@ -72,6 +84,7 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
         _queue = queue;
         _delegate = delegate;
         _outputCharacteristics = [NSMutableDictionary dictionary];
+        _batteryLevel = -1;
         peripheral.delegate = self;
     }
     return self;
@@ -103,8 +116,11 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
     self.inputCharacteristic = nil;
     self.reportCharacteristic = nil;
     [self.outputCharacteristics removeAllObjects];
+    self.batteryReportCharacteristic = nil;
+    self.batteryLevelCharacteristic = nil;
+    self.batteryFromReport = NO;
     self.setupStartedAt = CFAbsoluteTimeGetCurrent();
-    [self.peripheral discoverServices:@[[CBUUID UUIDWithString:kValveService]]];
+    [self.peripheral discoverServices:@[[CBUUID UUIDWithString:kValveService], [CBUUID UUIDWithString:kBatteryService]]];
 }
 
 - (void)restartSetup
@@ -192,6 +208,43 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
     });
 }
 
+#pragma mark Battery
+
+- (void)readBattery
+{
+    dispatch_async(self.queue, ^{
+        if (self.peripheral.state != CBPeripheralStateConnected) {
+            return;
+        }
+        CBCharacteristic *characteristic = self.batteryReportCharacteristic ?: self.batteryLevelCharacteristic;
+        if (characteristic != nil && (characteristic.properties & CBCharacteristicPropertyRead)) {
+            [self.peripheral readValueForCharacteristic:characteristic];
+        }
+    });
+}
+
+- (void)watchBattery:(CBCharacteristic *)characteristic
+{
+    if (characteristic.properties & (CBCharacteristicPropertyNotify | CBCharacteristicPropertyIndicate)) {
+        [self.peripheral setNotifyValue:YES forCharacteristic:characteristic];
+    }
+    if (characteristic.properties & CBCharacteristicPropertyRead) {
+        [self.peripheral readValueForCharacteristic:characteristic];
+    }
+}
+
+- (void)deliverBatteryReport:(const uint8_t *)payload
+{
+    uint8_t report[1 + kBatteryReportPayload];
+    report[0] = kBatteryReportId;
+    memcpy(report + 1, payload, kBatteryReportPayload);
+    self.batteryLevel = payload[1];
+    id<ILNTritonBLEDelegate> delegate = self.delegate;
+    if ([delegate respondsToSelector:@selector(triton:didReceiveBatteryReport:)]) {
+        [delegate triton:self didReceiveBatteryReport:[NSData dataWithBytes:report length:sizeof(report)]];
+    }
+}
+
 #pragma mark Notification retries
 
 // Enabling notifications silently fails until the user accepts the system
@@ -233,12 +286,23 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
     for (CBService *service in peripheral.services) {
         if ([service.UUID isEqual:[CBUUID UUIDWithString:kValveService]]) {
             [peripheral discoverCharacteristics:nil forService:service];
+        } else if ([service.UUID isEqual:[CBUUID UUIDWithString:kBatteryService]]) {
+            [peripheral discoverCharacteristics:@[[CBUUID UUIDWithString:kBatteryLevelCharacteristic]] forService:service];
         }
     }
 }
 
 - (void)peripheral:(CBPeripheral *)peripheral didDiscoverCharacteristicsForService:(CBService *)service error:(NSError *)error
 {
+    if ([service.UUID isEqual:[CBUUID UUIDWithString:kBatteryService]]) {
+        for (CBCharacteristic *characteristic in service.characteristics) {
+            if ([characteristic.UUID isEqual:[CBUUID UUIDWithString:kBatteryLevelCharacteristic]]) {
+                self.batteryLevelCharacteristic = characteristic;
+                [self watchBattery:characteristic];
+            }
+        }
+        return;
+    }
     if (![service.UUID isEqual:[CBUUID UUIDWithString:kValveService]]) {
         return;
     }
@@ -253,6 +317,9 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
             input47 = characteristic;
         } else if ([uuid isEqualToString:kReportCharacteristic]) {
             self.reportCharacteristic = characteristic;
+        } else if ([uuid isEqualToString:kBatteryReportCharacteristic]) {
+            self.batteryReportCharacteristic = characteristic;
+            [self watchBattery:characteristic];
         } else if ([uuid hasPrefix:@"100F6C"] && [uuid hasSuffix:kValveUUIDSuffix] && uuid.length >= 8) {
             // Output report N lives at 100F6C(N + 0x35).
             unsigned int value = 0;
@@ -294,6 +361,28 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
         report[0] = self.inputReportId;
         memcpy(report + 1, value.bytes, kStateReportPayload);
         [self.delegate triton:self didReceiveReport:report length:sizeof(report)];
+    } else if (characteristic == self.batteryReportCharacteristic) {
+        NSData *value = characteristic.value;
+        if (error != nil || value.length < kBatteryReportPayload) {
+            return;
+        }
+        // Some firmware puts the report ID first, as for feature reports.
+        const uint8_t *bytes = (const uint8_t *)value.bytes;
+        if (bytes[0] == kBatteryReportId && value.length >= kBatteryReportPayload + 1) {
+            bytes += 1;
+        }
+        self.batteryFromReport = YES;
+        [self deliverBatteryReport:bytes];
+    } else if (characteristic == self.batteryLevelCharacteristic) {
+        NSData *value = characteristic.value;
+        if (error != nil || value.length < 1 || self.batteryFromReport) {
+            return;
+        }
+        // Only a percentage: report it as discharging, with no voltages.
+        uint8_t payload[kBatteryReportPayload] = {0};
+        payload[0] = kChargeStateDischarging;
+        payload[1] = MIN(((const uint8_t *)value.bytes)[0], (uint8_t)100);
+        [self deliverBatteryReport:payload];
     } else if (characteristic == self.reportCharacteristic) {
         void (^pending)(NSData *) = self.pendingFeatureRead;
         self.pendingFeatureRead = nil;
