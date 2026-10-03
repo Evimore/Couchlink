@@ -546,12 +546,14 @@ namespace {
                        : controller.attached ? ILNControllerStateOnPC
                        : ILNControllerStateConnecting;
             info.batteryLevel = controller.device.batteryLevel;
+            info.batteryCharging = controller.device.batteryCharging;
             [infos addObject:info];
             NSString *state = info.state == ILNControllerStateOnThisDevice ? @"Disconnected from PC"
                             : info.state == ILNControllerStateWaitingForPC ? @"Waiting for PC"
                             : info.state == ILNControllerStateOnPC ? @"Connected to PC"
                             : @"Connecting to PC...";
-            NSString *battery = info.batteryLevel >= 0 ? [NSString stringWithFormat:@", battery %ld%%%@", (long)info.batteryLevel,
+            NSString *battery = info.batteryLevel >= 0 ? [NSString stringWithFormat:@", battery %ld%%%@%@", (long)info.batteryLevel,
+                                                                                    info.batteryCharging ? @", charging" : @"",
                                                                                     controller.device.batteryFromReport ? @"" : @" (level only)"]
                                                        : @", battery unknown";
             [controllers addObject:[NSString stringWithFormat:@"%@: %@%@", info.name, state, battery]];

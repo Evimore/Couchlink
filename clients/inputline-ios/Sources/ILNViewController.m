@@ -46,11 +46,101 @@ static UIColor *ILNGray(void)
     return [UIColor systemGrayColor];
 }
 
+#pragma mark - Battery
+
+/// A battery like the one in the status bar: filled to the level, green
+/// with a lightning bolt while plugged in, red when low.
+@interface ILNBatteryView : UIView
+@property (nonatomic) NSInteger level;  // 0-100
+@property (nonatomic) BOOL charging;
+@end
+
+@implementation ILNBatteryView
+
+- (instancetype)initWithFrame:(CGRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (self != nil) {
+        self.opaque = NO;
+        self.backgroundColor = [UIColor clearColor];
+        self.contentMode = UIViewContentModeRedraw;
+    }
+    return self;
+}
+
+- (CGSize)intrinsicContentSize
+{
+    return CGSizeMake(27, 13);
+}
+
+- (void)setLevel:(NSInteger)level
+{
+    _level = MAX((NSInteger)0, MIN(level, (NSInteger)100));
+    [self setNeedsDisplay];
+}
+
+- (void)setCharging:(BOOL)charging
+{
+    _charging = charging;
+    [self setNeedsDisplay];
+}
+
+- (void)traitCollectionDidChange:(UITraitCollection *)previous
+{
+    [super traitCollectionDidChange:previous];
+    [self setNeedsDisplay];
+}
+
+- (void)drawRect:(CGRect)rect
+{
+    const CGRect bounds = self.bounds;
+    const CGFloat nubWidth = 2;
+    const CGRect body = CGRectMake(0.5, 0.5, bounds.size.width - nubWidth - 1.5, bounds.size.height - 1);
+
+    UIBezierPath *outline = [UIBezierPath bezierPathWithRoundedRect:body cornerRadius:3.5];
+    outline.lineWidth = 1;
+    [[[UIColor labelColor] colorWithAlphaComponent:0.35] setStroke];
+    [outline stroke];
+
+    UIBezierPath *nub = [UIBezierPath bezierPathWithRoundedRect:CGRectMake(CGRectGetMaxX(body) + 1, CGRectGetMidY(body) - 2.25, nubWidth - 0.5, 4.5)
+                                              byRoundingCorners:UIRectCornerTopRight | UIRectCornerBottomRight
+                                                    cornerRadii:CGSizeMake(1, 1)];
+    [[[UIColor labelColor] colorWithAlphaComponent:0.35] setFill];
+    [nub fill];
+
+    const CGRect inside = CGRectInset(body, 2, 2);
+    UIColor *fill = self.charging ? ILNGreen() : self.level <= 20 ? ILNRed() : [UIColor labelColor];
+    if (self.level > 0) {
+        const CGFloat width = MAX(2, inside.size.width * (CGFloat)self.level / 100);
+        [fill setFill];
+        [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(inside.origin.x, inside.origin.y, width, inside.size.height) cornerRadius:1.5] fill];
+    }
+
+    if (self.charging) {
+        // The bolt, with a thin outline in the card's colour so it reads over the fill.
+        UIImageSymbolConfiguration *config = [UIImageSymbolConfiguration configurationWithPointSize:10 weight:UIImageSymbolWeightBlack];
+        UIImage *bolt = [UIImage systemImageNamed:@"bolt.fill" withConfiguration:config];
+        const CGSize size = bolt.size;
+        const CGRect place = CGRectMake(CGRectGetMidX(body) - size.width / 2, CGRectGetMidY(body) - size.height / 2, size.width, size.height);
+        UIImage *halo = [bolt imageWithTintColor:[UIColor secondarySystemGroupedBackgroundColor] renderingMode:UIImageRenderingModeAlwaysOriginal];
+        for (CGFloat dx = -1; dx <= 1; dx += 1) {
+            for (CGFloat dy = -1; dy <= 1; dy += 1) {
+                [halo drawInRect:CGRectOffset(place, dx, dy)];
+            }
+        }
+        [[bolt imageWithTintColor:[UIColor labelColor] renderingMode:UIImageRenderingModeAlwaysOriginal] drawInRect:place];
+    }
+}
+
+@end
+
 #pragma mark - Status row
 
 /// A round symbol, a title and a coloured status line: the top of a card.
 @interface ILNStatusRow : UIView
 - (void)setSymbol:(NSString *)symbol title:(NSString *)title status:(NSString *)status color:(UIColor *)color busy:(BOOL)busy;
+/// A battery on the right; level -1 hides it.
+- (void)setBatteryLevel:(NSInteger)level charging:(BOOL)charging;
 @end
 
 @implementation ILNStatusRow {
@@ -60,6 +150,10 @@ static UIColor *ILNGray(void)
     UIView *_dot;
     UILabel *_status;
     UIActivityIndicatorView *_spinner;
+    UIStackView *_battery;
+    ILNBatteryView *_batteryIcon;
+    UILabel *_batteryText;
+    NSString *_accessibilityBase;
 }
 
 - (instancetype)init
@@ -103,7 +197,18 @@ static UIColor *ILNGray(void)
     texts.axis = UILayoutConstraintAxisVertical;
     texts.spacing = 2;
     texts.alignment = UIStackViewAlignmentLeading;
-    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[_badge, texts]];
+    _batteryIcon = [[ILNBatteryView alloc] initWithFrame:CGRectZero];
+    _batteryText = [[UILabel alloc] init];
+    _batteryText.font = [UIFont monospacedDigitSystemFontOfSize:[UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline].pointSize
+                                                         weight:UIFontWeightMedium];
+    _batteryText.textColor = [UIColor secondaryLabelColor];
+    _battery = [[UIStackView alloc] initWithArrangedSubviews:@[_batteryText, _batteryIcon]];
+    _battery.spacing = 5;
+    _battery.alignment = UIStackViewAlignmentCenter;
+    _battery.hidden = YES;
+    [_battery setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [_battery setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[_badge, texts, _battery]];
     row.spacing = 12;
     row.alignment = UIStackViewAlignmentCenter;
     row.translatesAutoresizingMaskIntoConstraints = NO;
@@ -138,7 +243,28 @@ static UIColor *ILNGray(void)
     } else {
         [_spinner stopAnimating];
     }
-    self.accessibilityLabel = [NSString stringWithFormat:@"%@, %@", title, status];
+    _accessibilityBase = [NSString stringWithFormat:@"%@, %@", title, status];
+    [self updateAccessibility];
+}
+
+- (void)setBatteryLevel:(NSInteger)level charging:(BOOL)charging
+{
+    _battery.hidden = level < 0;
+    if (level >= 0) {
+        _batteryIcon.level = level;
+        _batteryIcon.charging = charging;
+        _batteryText.text = [NSString stringWithFormat:@"%ld%%", (long)level];
+    }
+    [self updateAccessibility];
+}
+
+- (void)updateAccessibility
+{
+    if (_battery.hidden) {
+        self.accessibilityLabel = _accessibilityBase;
+        return;
+    }
+    self.accessibilityLabel = [NSString stringWithFormat:@"%@, battery %@%@", _accessibilityBase, _batteryText.text, _batteryIcon.charging ? @", charging" : @""];
 }
 
 @end
@@ -678,14 +804,12 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
                                                                          status:@"Switch it on to connect"
                                                                           color:ILNGray()
                                                                            busy:NO];
+        [(ILNStatusRow *)_controllerRows.arrangedSubviews.firstObject setBatteryLevel:-1 charging:NO];
     }
     NSString *pc = status.pcName.length > 0 ? status.pcName : @"the PC";
     for (NSUInteger i = 0; i < controllers.count; ++i) {
         ILNStatusRow *row = (ILNStatusRow *)_controllerRows.arrangedSubviews[i];
         NSString *title = controllers.count > 1 ? [NSString stringWithFormat:@"Steam Controller %lu", (unsigned long)i + 1] : @"Steam Controller";
-        if (controllers[i].batteryLevel >= 0) {
-            title = [NSString stringWithFormat:@"%@ · %ld%%", title, (long)controllers[i].batteryLevel];
-        }
         switch (controllers[i].state) {
             case ILNControllerStateOnPC:
                 [row setSymbol:@"gamecontroller.fill" title:title status:[NSString stringWithFormat:@"Connected to %@", pc] color:ILNGreen() busy:NO];
@@ -700,6 +824,7 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
                 [row setSymbol:@"gamecontroller.fill" title:title status:@"Disconnected from PC" color:ILNRed() busy:NO];
                 break;
         }
+        [row setBatteryLevel:controllers[i].batteryLevel charging:controllers[i].batteryCharging];
     }
 
     const BOOL any = controllers.count > 0;
@@ -776,6 +901,8 @@ typedef NS_ENUM(NSInteger, ILNButtonStyle) {
     } else if ([state isEqualToString:@"disconnected"]) {
         status.linkState = ILNLinkStateDisconnected;
         controller.state = ILNControllerStateOnThisDevice;
+        controller.batteryLevel = 36;
+        controller.batteryCharging = YES;
         status.controllerInfo = @[controller];
     } else {  // connected
         status.linkState = ILNLinkStateConnected;

@@ -60,6 +60,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) NSInteger batteryLevel;
 /// YES once Valve's own battery report arrived; NO if only the plain level is known.
 @property (nonatomic, readonly) BOOL batteryFromReport;
+/// Plugged in: charging, or full while on power. Only known from Valve's report.
+@property (nonatomic, readonly) BOOL batteryCharging;
 
 /// Ask the controller for its battery again (the answer comes through the delegate).
 - (void)readBattery;

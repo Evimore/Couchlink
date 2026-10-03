@@ -25,7 +25,11 @@ static NSString *const kBatteryService = @"180F";
 static NSString *const kBatteryLevelCharacteristic = @"2A19";
 static const uint8_t kBatteryReportId = 0x43;
 static const size_t kBatteryReportPayload = 14;  // TritonBatteryStatus_t
-static const uint8_t kChargeStateDischarging = 1;  // EChargeState
+// EChargeState
+static const uint8_t kChargeStateDischarging = 1;
+static const uint8_t kChargeStateCharging = 2;
+static const uint8_t kChargeStateSourceCheck = 3;  // checking the power source it was just plugged into
+static const uint8_t kChargeStateFull = 4;
 
 static const size_t kStateReportPayload = 45;
 static const NSTimeInterval kNotifyRetryInterval = 1.0;
@@ -66,6 +70,7 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
 @property (nonatomic, strong, nullable) CBCharacteristic *batteryLevelCharacteristic;
 @property (nonatomic, assign) BOOL batteryFromReport;  // Valve's report seen: ignore the plain level
 @property (nonatomic, assign) NSInteger batteryLevel;
+@property (nonatomic, assign) BOOL batteryCharging;
 @property (nonatomic, assign) CFAbsoluteTime setupStartedAt;
 @property (nonatomic, assign) NSUInteger setupRestarts;
 
@@ -239,6 +244,7 @@ static void TritonLog(id<ILNTritonBLEDelegate> delegate, NSString *message)
     report[0] = kBatteryReportId;
     memcpy(report + 1, payload, kBatteryReportPayload);
     self.batteryLevel = payload[1];
+    self.batteryCharging = payload[0] == kChargeStateCharging || payload[0] == kChargeStateSourceCheck || payload[0] == kChargeStateFull;
     id<ILNTritonBLEDelegate> delegate = self.delegate;
     if ([delegate respondsToSelector:@selector(triton:didReceiveBatteryReport:)]) {
         [delegate triton:self didReceiveBatteryReport:[NSData dataWithBytes:report length:sizeof(report)]];

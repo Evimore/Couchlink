@@ -35,6 +35,8 @@ typedef NS_ENUM(NSInteger, ILNControllerState) {
 @property (nonatomic) ILNControllerState state;
 /// Battery percentage, or -1 if the controller hasn't said.
 @property (nonatomic) NSInteger batteryLevel;
+/// Plugged in (charging, or full on power).
+@property (nonatomic) BOOL batteryCharging;
 @end
 
 /// A snapshot for the UI; safe to read on the main thread.
