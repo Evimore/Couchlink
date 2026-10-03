@@ -70,6 +70,8 @@ If InputLine doesn't find the PC at home:
 
 Download the new `.ipa` and sideload it the same way, **with the same Bundle ID**. It replaces the app in place and keeps its pairing with the PC and its controllers.
 
+First close InputLine on the device (swipe it away in the app switcher). It keeps running in the background, and while it does, the install can stop partway (Sideloadly stuck at around 80%).
+
 ## Free Apple ID limits
 
 | Limit | What it means |
